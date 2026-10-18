@@ -1,8 +1,8 @@
 <!--
 SYNC IMPACT REPORT (scratch — remove before committing)
 Version change: 1.0.0 → 1.0.1 (PATCH)
-Bump rationale: Governance wording only. The precedence list now also names feature specs.
-No principle changed.
+Bump rationale: wording only. The governance precedence list now also names feature specs,
+and Principle IV's pilot example uses the settled spelling "Arab Mutair". No rule changed.
 
 Previous change: (unratified template) → 1.0.0, first ratification on 2026-10-18.
 
@@ -35,7 +35,7 @@ Dependent templates (.specify/templates/*): not modified (read constitution at r
 
 Follow-up TODOs:
   - DONE 2026-10-19: README.md and docs/BUSINESS_RULES.md rewritten to match.
-  - Confirm the pilot locality spelling for seed data (README "Arab Matir" vs brief "Arab Muteer").
+  - DONE 2026-10-19: pilot spelling settled as "Arab Mutair" (Principle IV example updated).
   - Legal review against Egypt PDPL (Law 151/2020) before pilot launch (Principle II).
 -->
 
@@ -115,7 +115,7 @@ ownership is the only identity signal available for free.
 
 - Locations MUST use a generic, admin-managed hierarchy: Country → Region → District → Locality.
   Matching, filters, statistics, and admin scopes MUST reference location IDs, never names.
-- No pilot-specific name (e.g. Arab Muteer, Egypt) MAY appear in code, identifiers, routes, or
+- No pilot-specific name (e.g. Arab Mutair, Egypt) MAY appear in code, identifiers, routes, or
   config keys. The pilot exists only as data rows and seed fixtures.
 - Country-specific behavior (dial code, mobile prefixes, timezone, default language) MUST come
   from per-country configuration, not hard-coded branches.

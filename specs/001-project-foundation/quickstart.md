@@ -1,0 +1,121 @@
+# 🚀 Quickstart: Project Foundation
+
+**Feature**: [spec.md](./spec.md) · **Plan**: [plan.md](./plan.md)
+
+How to run, test, deploy, and **prove** this feature works. Contracts are linked rather than repeated.
+
+---
+
+## 1. 🧰 Prerequisites
+
+| Tool | Version | Check |
+| --- | --- | --- |
+| PHP | 8.3 | `php -v` |
+| Composer | 2.x | `composer -V` |
+| Node.js | 24 LTS | `node -v` |
+| Git + GitHub repo | — | `git remote -v` |
+
+| Account / resource | Needed for |
+| --- | --- |
+| Google Cloud project, **Sheets API** enabled, one **service account** | Sheets store |
+| Two spreadsheets shared **only** with the service account and you, titled `Blood Donor Network [sandbox]` and `Blood Donor Network [production]` | FR-022, research R14 |
+| GitHub Environments `sandbox` and `production` (the latter with required reviewers) | Operator workflows |
+| Vercel (Hobby), Render (free, **no other free services in that workspace**), cron-job.org | Deploy (research R12, R15) |
+
+---
+
+## 2. 🖥️ Run locally (in-memory store, no Google account needed)
+
+```bash
+cd backend
+cp .env.example .env
+```
+
+In `backend/.env` set `DATA_DRIVER=memory`, plus any long random values for `SCHEDULER_SECRET` and `OPERATOR_HEALTH_SECRET`.
+
+```bash
+cd backend && composer install && php artisan key:generate && php artisan serve --port=8000
+```
+
+```bash
+cd frontend && npm ci && npm run dev
+```
+
+In `frontend/.env.local` set `NEXT_PUBLIC_API_BASE_URL=http://localhost:8000`.
+
+**Expected**: http://localhost:3000 shows an Arabic, right-to-left page with "الخدمة تعمل" and the disclaimer footer.
+
+---
+
+## 3. 🧪 Run the checks (same as CI)
+
+| Area | Command |
+| --- | --- |
+| Backend style | `cd backend && ./vendor/bin/pint --test` |
+| Backend static analysis | `cd backend && ./vendor/bin/phpstan analyse` |
+| Backend tests (unit + feature + contract on memory) | `cd backend && ./vendor/bin/pest` |
+| Frontend lint / format / types | `cd frontend && npm run lint && npm run format:check && npm run typecheck` |
+| Frontend unit tests | `cd frontend && npm test` |
+| Frontend build | `cd frontend && npm run build` |
+| E2E + accessibility | `cd frontend && npx playwright test` (starts both apps on the memory store) |
+| Sheets contract (sandbox only) | `cd backend && ./vendor/bin/pest --group=sheets` with `TEST_GOOGLE_SHEET_ID` set |
+
+---
+
+## 4. 🗂️ Prepare a spreadsheet store
+
+Run from your machine (or the **ops-store-setup** workflow, [operator-commands.md](./contracts/operator-commands.md)):
+
+```bash
+cd backend && php artisan store:setup --dry-run
+```
+
+```bash
+cd backend && php artisan store:setup
+```
+
+**Expected**: the first real run lists `+ tab Settings`, `+ tab SchedulerSteps`, and `+ tab OperationalLogs`; a second run prints `✔ no changes`.
+
+---
+
+## 5. ☁️ Deploy
+
+| Step | Where | Settings |
+| --- | --- | --- |
+| 1 | **Render** → New → Blueprint → this repo (`render.yaml`) | Fill the secret env vars: `APP_KEY`, `GOOGLE_SERVICE_ACCOUNT_JSON`, `GOOGLE_SHEET_ID` (**sandbox** until pilot), `SCHEDULER_SECRET`, `OPERATOR_HEALTH_SECRET`, `FRONTEND_URL` |
+| 2 | **Vercel** → Import repo, root directory `frontend` | `NEXT_PUBLIC_API_BASE_URL=https://<render-host>` |
+| 3 | **cron-job.org** → New job | URL `https://<render-host>/api/v1/internal/tick`, method **POST**, every **1 min**, header `X-Scheduler-Secret: <secret>`, timeout 30 s, **email on failure** + on recovery |
+| 4 | **GitHub** → branch protection on `main` | Require status checks: `backend`, `frontend`, `e2e`, `secrets-scan` |
+
+---
+
+## 6. ✅ Validation scenarios
+
+| # | Proves | Do this | Expected |
+| --- | --- | --- | --- |
+| V1 | US1, FR-001, FR-005 | Open the Vercel URL on a phone (or a 360 px viewport) | Arabic RTL page, "الخدمة تعمل", disclaimer in footer, no horizontal scroll |
+| V2 | US1, FR-006 | `curl -sI https://<vercel-host>/` and view the page source | `X-Robots-Tag: noindex` header and robots meta `noindex,nofollow` |
+| V3 | US1 · limited | Temporarily set a wrong `GOOGLE_SHEET_ID` on Render, wait 60 s, reload | "الخدمة تعمل بشكل محدود مؤقتًا"; no technical detail visible |
+| V4 | US1 · unavailable | Point `NEXT_PUBLIC_API_BASE_URL` at a dead host in a preview deploy | After ≤ 8 s: "الخدمة غير متاحة مؤقتًا" + Retry button |
+| V5 | US2, FR-008 | `curl -X POST https://<render-host>/api/v1/internal/tick` with no header, 12 times | `401` ×10, then `429`; one aggregated `scheduler.refused` row in `OperationalLogs` |
+| V6 | US2, FR-010, SC-003 | Send two correct tick calls at the same moment | One `success`, the other `busy` or `skipped`; `SchedulerSteps.heartbeat` updated once for that minute |
+| V7 | US2, FR-013 | Open `https://<render-host>/api/v1/health/details` in a phone browser | Login prompt; with `operator` + secret → JSON with `scheduler.lastSuccessAt` < 2 min ago |
+| V8 | US2, SC-002 | Leave cron running 7 days; check cron-job.org history; at random hours run `curl -s -o /dev/null -w "%{time_total}" https://<render-host>/api/v1/health` | ≥ 99% successful runs; `/api/v1/health` ≤ 3 s every time |
+| V9 | US3, SC-004 | Run the contract suite on memory and on the sandbox sheet | Both 100% green |
+| V10 | US4, FR-024/025 | `settings:list`; then `settings:set WaveSize 6 --by=owner`; then store `abc` via the sheet in **sandbox only** and run `settings:list` | Defaults shown; then `6` (source override) + `setting.changed` log; then default `5` with source `invalid→default` + `setting.invalid` log |
+| V11 | US5, FR-028 | Open a PR that breaks one Pest test | Required check fails; merge blocked |
+| V12 | FR-030, SC-008 | Look at the `secrets-scan` CI job | Zero findings |
+| V13 | SC-010 | Look at the e2e job's axe report | Zero WCAG 2.1 AA violations |
+| V14 | FR-031/033 | Remove `SCHEDULER_SECRET` on a preview backend, or delete one header in the **sandbox** sheet | `/health` → `limited`; `/health/details` lists the missing name; tick → `503` |
+
+> ⚠️ V3 and V10's manual sheet edit are **sandbox-only test procedures**. Rule AD-09 (no manual edits) applies to production.
+
+---
+
+## 7. 🧾 Launch checklist for this feature
+
+- [ ] Render workspace has **no other free services** (750 h budget)
+- [ ] Free-tier terms re-checked for Vercel, Render, and cron-job.org (research R15)
+- [ ] Spreadsheet sharing: service account + owner only, **not** "anyone with the link"
+- [ ] `.env` files absent from git; `.env.example` present with empty values
+- [ ] cron-job.org failure emails reach the owner

@@ -1,0 +1,9 @@
+includes:
+    - vendor/larastan/larastan/extension.neon
+
+parameters:
+    # Constitution requires level 6 or higher; the plan targets 8.
+    level: 8
+    paths:
+        - app
+        - config

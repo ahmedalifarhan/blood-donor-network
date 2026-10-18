@@ -1,0 +1,178 @@
+openapi: 3.1.0
+info:
+  title: Blood Donor Network API — Foundation
+  version: 1.0.0
+  description: |
+    Endpoints delivered by feature 001-project-foundation.
+    All responses send `X-Robots-Tag: noindex` and `Cache-Control: no-store`.
+    CORS: only the configured FRONTEND_URL origin is allowed (GET on /health only).
+    All times are UTC ISO 8601.
+servers:
+  - url: https://{backend-host}/api/v1
+    variables:
+      backend-host:
+        default: blood-donor-network-api.onrender.com
+paths:
+  /health:
+    get:
+      summary: Public service status (three-state summary is completed by the frontend)
+      description: |
+        Backend reachability is implied by any response. Store reachability is probed at most
+        once per 60 seconds (cached). Never returns internal details (FR-004).
+        Rate limit: 60 requests/min per IP.
+      operationId: getHealth
+      security: []
+      responses:
+        '200':
+          description: Backend is up. `status` says whether the store and configuration are OK.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicHealth'
+              examples:
+                running:
+                  value: { status: running, checkedAt: '2026-10-19T10:15:02Z' }
+                limited:
+                  value: { status: limited, checkedAt: '2026-10-19T10:15:02Z' }
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /health/details:
+    get:
+      summary: Operator health detail (FR-013)
+      description: HTTP Basic, username `operator`, password = OPERATOR_HEALTH_SECRET. 10 failed attempts/min per IP, then 429.
+      operationId: getHealthDetails
+      security:
+        - operatorBasic: []
+      responses:
+        '200':
+          description: Detailed health
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailedHealth'
+        '401':
+          description: Missing or wrong credentials. Empty body, `WWW-Authenticate: Basic realm="operator"`.
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /internal/tick:
+    post:
+      summary: Scheduler entry point, called every minute by cron-job.org
+      description: |
+        Runs every registered step that is due. Idempotent per step and period (FR-010).
+        Must respond within 25 s (cron-job.org closes at 30 s).
+        Refused calls: 10/min per IP, then 429; aggregated into one operational log entry per minute.
+      operationId: postTick
+      security:
+        - schedulerSecret: []
+      requestBody:
+        required: false
+        content: {}
+      responses:
+        '200':
+          description: Tick processed. Individual step failures do not change the status code (FR-011).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TickResult'
+              example:
+                ranAt: '2026-10-19T10:15:00Z'
+                steps:
+                  - { name: heartbeat, period: '2026-10-19T10:15Z', outcome: success }
+        '401':
+          description: Missing or wrong secret. Empty body. Nothing runs.
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          description: Backend not configured (required secret missing). Nothing runs.
+components:
+  securitySchemes:
+    schedulerSecret:
+      type: apiKey
+      in: header
+      name: X-Scheduler-Secret
+    operatorBasic:
+      type: http
+      scheme: basic
+  responses:
+    TooManyRequests:
+      description: Rate limited. `Retry-After` header in seconds.
+  schemas:
+    PublicHealth:
+      type: object
+      additionalProperties: false
+      required: [status, checkedAt]
+      properties:
+        status:
+          type: string
+          enum: [running, limited]
+        checkedAt:
+          type: string
+          format: date-time
+    StepOutcome:
+      type: string
+      enum: [success, failure, skipped, busy]
+    TickResult:
+      type: object
+      additionalProperties: false
+      required: [ranAt, steps]
+      properties:
+        ranAt: { type: string, format: date-time }
+        steps:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, period, outcome]
+            properties:
+              name: { type: string }
+              period: { type: string, description: 'Period key, e.g. 2026-10-19T10:15Z' }
+              outcome: { $ref: '#/components/schemas/StepOutcome' }
+    DetailedHealth:
+      type: object
+      additionalProperties: false
+      required: [status, checkedAt, driver, version, store, config, scheduler]
+      properties:
+        status: { type: string, enum: [running, limited] }
+        checkedAt: { type: string, format: date-time }
+        driver: { type: string, enum: [sheets, memory] }
+        version: { type: string, description: Build commit SHA }
+        store:
+          type: object
+          additionalProperties: false
+          required: [reachable, structureComplete, missing]
+          properties:
+            reachable: { type: boolean }
+            structureComplete: { type: boolean }
+            missing:
+              type: array
+              description: Missing tabs or headers, e.g. "SchedulerSteps.LastPeriod"
+              items: { type: string }
+        config:
+          type: object
+          additionalProperties: false
+          required: [missing]
+          properties:
+            missing:
+              type: array
+              description: Names (never values) of missing required environment variables
+              items: { type: string }
+        scheduler:
+          type: object
+          additionalProperties: false
+          required: [lastSuccessAt, steps]
+          properties:
+            lastSuccessAt: { type: [string, 'null'], format: date-time }
+            steps:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [name, lastPeriod, lastRunAt, lastOutcome, lastSuccessAt, consecutiveFailures]
+                properties:
+                  name: { type: string }
+                  lastPeriod: { type: [string, 'null'] }
+                  lastRunAt: { type: [string, 'null'], format: date-time }
+                  lastOutcome: { type: [string, 'null'], enum: [success, failure, null] }
+                  lastError: { type: [string, 'null'] }
+                  lastSuccessAt: { type: [string, 'null'], format: date-time }
+                  consecutiveFailures: { type: integer, minimum: 0 }

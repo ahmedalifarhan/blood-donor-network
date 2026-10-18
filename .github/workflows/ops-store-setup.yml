@@ -1,0 +1,62 @@
+name: ops-store-setup
+
+# Creates missing tabs and headers in a spreadsheet store (FR-033).
+# Runs here, not on Render: free instances have no shell (research R8).
+# Secrets come from the GitHub Environment of the same name; give the
+# "production" environment required reviewers.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Which store to set up
+        type: choice
+        options: [sandbox, production]
+        required: true
+      dry_run:
+        description: Only show what would change
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ops-store-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  store-setup:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      APP_ENV: production
+      DATA_DRIVER: sheets
+      CACHE_STORE: file
+      LOG_CHANNEL: stderr
+      GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+      GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+      DRY_RUN: ${{ inputs.dry_run }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          tools: composer:v2
+          coverage: none
+
+      - name: Install dependencies
+        run: composer install --no-dev --no-interaction --no-progress --prefer-dist
+
+      - name: Run store:setup
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            php artisan store:setup --dry-run
+          else
+            php artisan store:setup --force
+          fi

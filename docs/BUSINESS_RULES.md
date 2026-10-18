@@ -50,16 +50,18 @@ Every business rule, grouped by service.
 | D6 | Locations: generic **Country → Region → District → Locality** hierarchy | LC-01…LC-07 |
 | D7 | Hosting: free tier kept awake by an external cron | SC-01…SC-05 |
 
-### ❓ Still open (default applies until you decide)
+### ✅ Decided (2026-10-19), formerly open questions O1–O6
 
-| # | Question | Default | Rules |
+| # | Question | Decision | Rules |
 | --- | --- | --- | --- |
-| O1 | Notify donors whose blood type is still `Pending`? | **Yes**, only after verified donors run out, labelled "blood type not confirmed" | MT-03 |
-| O2 | Allow a request to list more than one blood type? | **Yes**, only the types the hospital named | BR-03 |
-| O3 | Must an admin approve a request before notifications start? | **No**. Rate limits and audit instead; revisit if abuse happens | BR-10 |
-| O4 | Which free backend host? | Decide before building | SC-05 |
-| O5 | Who are the pilot admins? | — | |
-| O6 | Pilot spelling for seed data: "Arab Muteer" or "Arab Matir"? | Arab Muteer (عرب مطير) | LC-05 |
+| D8 (O1) | Notify donors whose blood type is still `Pending`? | **Yes**, only after verified donors run out, labelled "blood type not confirmed" | MT-03 |
+| D9 (O2) | Can a request list more than one blood type? | **No, one type per request.** A second type needs a second request | BR-03, BR-09 |
+| D10 (O3) | Must an admin approve a request before notifications start? | **No.** Rate limits, audit, and donor-accepts-first instead; revisit if abuse happens | BR-10 |
+| D11 (O4) | Which free backend host? | **Render free tier**, kept awake by the every-minute tick | SC-05 |
+| D12 (O5) | Who are the pilot admins? | **The owner (SuperAdmin) + 1–2 trusted villagers**, each with their own account | AD-11 |
+| D13 (O6) | English spelling of عرب مطير? | **Arab Mutair** | LC-05 |
+
+> ✅ **No open decisions remain.** New questions get added here as `Ox` until they're decided.
 
 ---
 
@@ -161,16 +163,16 @@ Every business rule, grouped by service.
 
 | ID | Rule | Why |
 | --- | --- | --- |
-| BR-01 | Required: requester name, requester phone, blood type(s), hospital name, search area, units, urgency, consent | |
+| BR-01 | Required: requester name, requester phone, blood type, hospital name, search area, units, urgency, consent | |
 | BR-02 | Optional: hospital maps link, required date (default today), notes (max 300 characters) | A free maps link, not a paid maps API |
-| BR-03 | Requester selects **one or more** blood types, with the help text "only the types the hospital told you". The system never suggests types | Decision O2 |
+| BR-03 | Requester selects **exactly one** blood type: the one the hospital asked for. If the hospital names a second acceptable type, the requester creates a second request. The system never suggests types | Decision D9. Keeps matching and reporting simple; avoids nudging people toward types the hospital didn't name |
 | BR-04 | Units: 1–10 | |
 | BR-05 | Urgency: `Normal`, `Urgent`, `Emergency` | |
 | BR-06 | **Never collect** patient name or diagnosis | Not needed for matching; protects the patient |
 | BR-07 | `SearchLocationID` = where to look for donors, at any level of the hierarchy | The hospital is often in a city; the donors are in villages |
 | BR-08 | Requester consent checkbox: their name and phone are shared with donors who accept and appear on the share page. Store consent time and version | Requester data is personal data too |
-| BR-09 | Same requester phone + overlapping blood type + request still open → no new request; tell them one is already open (use its link or contact the admin) | Families submit twice in panic |
-| BR-10 | No admin approval before notifications | Decision O3 |
+| BR-09 | Same requester phone + **same** blood type + request still open → no new request; tell them one is already open (use its link or contact the admin) | Families submit twice in panic |
+| BR-10 | No admin approval before notifications | Decision D10 |
 | BR-11 | Rate limit: 3 requests per phone per day, 5 per IP per day | The main abuse risk is fake requests |
 | BR-12 | Requester gets a **manage link** (secret, stored hashed): status, notification progress, accepted donors, fulfil, cancel, share | No accounts. Without it, requests stay open forever and the KPIs are wrong |
 | BR-13 | Request IDs are ULIDs, never 1, 2, 3… | |
@@ -195,9 +197,9 @@ Every business rule, grouped by service.
 
 | ID | Rule | Why |
 | --- | --- | --- |
-| MT-01 | Match the **exact** blood type(s) the requester selected. No compatibility logic | Core rule: not a medical system |
+| MT-01 | Match the **exact** blood type the requester selected. No compatibility logic | Core rule: not a medical system |
 | MT-02 | Eligible: `Status=Active` AND (`Available` OR pause ended) AND `PhoneVerified=true` AND blood type known AND not `Rejected` AND locality inside the search area AND not already notified for this request | |
-| MT-03 | `Verified` donors first. `Pending` donors only after those run out, labelled **"blood type not confirmed"** | Decision O1. Better than nobody in an emergency; the hospital tests all blood anyway |
+| MT-03 | `Verified` donors first. `Pending` donors only after those run out, labelled **"blood type not confirmed"** | Decision D8. Better than nobody in an emergency; the hospital tests all blood anyway |
 | MT-04 | Ranking within each group: (1) location closeness: same locality → same district → same region; (2) not notified in the last `RotationDays`; (3) oldest last donation first (unknown = oldest); (4) most recently confirmed; (5) stable tie-breaker | |
 | MT-05 | **Fairness rotation**: donors notified in the last `RotationDays` (default 7) rank lower | Otherwise the same donors get every request and burn out |
 | MT-06 | Distance is by location hierarchy, **never** GPS | |
@@ -213,7 +215,7 @@ Every business rule, grouped by service.
 | NW-04 | Waves stop when accepted donors ≥ `UnitsRequired × AcceptTargetMultiplier` (default 2) or the request closes | Some acceptors won't show up |
 | NW-05 | A donor gets **at most one** notification per request | |
 | NW-06 | Quiet hours 23:00–07:00 (local time) apply to `Normal` requests only | Don't wake people for non-urgent requests |
-| NW-07 | Notification content (Arabic): blood type(s), hospital, area, urgency, units, needed-by date, medical disclaimer, **Accept / Decline**. **No requester phone** before Accept | |
+| NW-07 | Notification content (Arabic): blood type, hospital, area, urgency, units, needed-by date, medical disclaimer, **Accept / Decline**. **No requester phone** before Accept | |
 | NW-08 | Sending updates the donor's `LastNotifiedAt` and creates a `Notifications` row | Needed for fairness and KPIs |
 | NW-09 | Channel: Telegram when connected and reachable. Otherwise the notification is queued as `AdminRelay` (ES-01) | No matching donor is silently skipped (constitution VI) |
 | NW-10 | Send failures are recorded. A "bot blocked" error sets `TelegramUnreachableAt` and re-queues the notification as relay | No silent failures |
@@ -230,7 +232,7 @@ Every business rule, grouped by service.
 | CT-05 | **Decline** options: "Can't now", "Pause me for 1 month", "Stop notifications". The latter two update availability. Nothing is revealed | |
 | CT-06 | Accepts after the target (NW-04) are still recorded while the request is open | Extra donors are useful if some don't show up |
 | CT-07 | Every accept, decline, and contact reveal is logged | KPI, fairness, abuse investigation |
-| CT-08 | **Share request** button → public page with blood types, hospital, area, units, urgency, requester first name and contact, disclaimer, and "Register as a donor". **No donor data**. `noindex` | Uses the WhatsApp groups people already post in, and grows the donor base for free |
+| CT-08 | **Share request** button → public page with blood type, hospital, area, units, urgency, requester first name and contact, disclaimer, and "Register as a donor". **No donor data**. `noindex` | Uses the WhatsApp groups people already post in, and grows the donor base for free |
 | CT-09 | All channels sit behind the `NotificationChannel` interface. WhatsApp Cloud API is added next without changing callers | |
 | CT-10 | No unofficial WhatsApp automation (WhatsApp Web scripting), ever | Violates WhatsApp terms and gets numbers banned |
 
@@ -260,6 +262,7 @@ Every business rule, grouped by service.
 | AD-08 | Admins cannot hard-delete anything | |
 | AD-09 | **No one edits the Google Sheet by hand.** All changes go through the dashboard | Manual edits skip validation, duplicate checks, and the audit log |
 | AD-10 | Admin lists show phones masked; the full number appears only on the donor detail page and in the relay action | Less exposure on shared screens |
+| AD-11 | **Pilot admins:** the owner as SuperAdmin plus 1–2 trusted villagers (SuperAdmin during the pilot). Each person has their own account, so there are no shared logins, and all are in the admin Telegram alert group. Names are kept out of the docs | Decision D12. Someone can cover nights and the relay queue; separate accounts keep the audit log meaningful |
 
 ## 15. 📍 Locations
 
@@ -269,7 +272,7 @@ Every business rule, grouped by service.
 | LC-02 | Names are unique within their parent | Two villages can share a name in different centers |
 | LC-03 | Donors attach only to a **Locality**. Requests can search at any level | |
 | LC-04 | A deactivated location is hidden from public pickers; its donors stay matchable | |
-| LC-05 | The pilot is seed data only. Nothing in code, routes, or config keys refers to it by name | Constitution IV |
+| LC-05 | The pilot, **Arab Mutair (عرب مطير)**, is seed data only. Nothing in code, routes, or config keys refers to it by name | Constitution IV; spelling per decision D13 |
 | LC-06 | Country config: dial code, mobile prefixes, national number length, timezone, default language | |
 | LC-07 | Every location change is audited | |
 
@@ -315,7 +318,7 @@ Every business rule, grouped by service.
 | DS-05 | All writes go through one write lock; the backend runs as **one instance** | Same reason as DUP-06 |
 | DS-06 | Retry with exponential backoff on quota errors (HTTP 429) | |
 | DS-07 | Times stored in UTC (ISO 8601) and displayed in the location's timezone | Egypt uses daylight saving time again |
-| DS-08 | Weekly backup: copy the spreadsheet to a private Drive folder | |
+| DS-08 | Weekly backup: copy the spreadsheet to a private Drive folder. ⏳ **Deferred obligation:** feature `001-project-foundation` deferred this because it stores no personal data. A `weekly-backup` scheduler step **MUST ship before or with the first feature that stores personal data** (donor registration), and that feature's plan must include it | Constitution V; time-boxed exception recorded in `specs/001-project-foundation/plan.md` |
 | DS-09 | Repository interfaces, so MySQL/PostgreSQL replaces Sheets without changing business logic | Constitution V |
 | DS-10 | Plan the move to SQL at > 5,000 donors, repeated quota errors, or a need for more than one backend instance | Constitution V |
 
@@ -327,7 +330,7 @@ Every business rule, grouped by service.
 | SC-02 | Tick steps: send due waves, escalations, expire requests, return availability, deactivate stale unverified donors, six-month confirmations, weekly backup | One place for all time-based rules |
 | SC-03 | Each step is idempotent: running tick twice never sends or changes anything twice | Cron retries and overlaps happen |
 | SC-04 | A failed step is logged and reported to the admin Telegram group | No silent failures (constitution VI) |
-| SC-05 | The same call keeps the free-tier backend awake. Check that the chosen host (O4) allows this | Free hosts sleep when idle |
+| SC-05 | The same call keeps the backend on **Render's free tier** awake (D11). Re-check Render's free-tier terms and monthly instance-hour allowance before launch | Free hosts sleep when idle |
 
 ---
 
@@ -345,3 +348,5 @@ Every business rule, grouped by service.
 - **Search:** removed the request-bound donor list; the public now sees counts only (D5).
 - **Lifecycle:** `InProgress` is now triggered by the first acceptance, not the first contact click.
 - **Name and stack:** BloodLink → Blood Donor Network; Vue → Next.js (README).
+- **Blood types per request (2026-10-19):** the earlier draft allowed several types per request; it is now **one type per request** (D9).
+- **Pilot spelling (2026-10-19):** "Arab Matir" / "Arab Muteer" → **Arab Mutair** (D13).

@@ -4,7 +4,7 @@
 
 > Status: Planning. No application code yet.
 > Budget: low-cost. Every service has a free path for the pilot, and paid services sit behind an interface.
-> Pilot area: **Arab Muteer (عرب مطير), Egypt**. The pilot is a data row, not part of the product name or the code.
+> Pilot area: **Arab Mutair (عرب مطير), Egypt**. The pilot is a data row, not part of the product name or the code.
 
 > 📜 **Source of truth:** [constitution](.specify/memory/constitution.md) → [docs/BUSINESS_RULES.md](docs/BUSINESS_RULES.md) → this README. If two conflict, the earlier one wins.
 
@@ -71,11 +71,11 @@ Not a directory of `Name / Phone / Blood Type`, but a **community blood donor ne
 
 ## 3. 🧭 Core Principle
 
-> **Don't build a village-specific blood database. Build a location-agnostic blood donor network whose first pilot is Arab Muteer.**
+> **Don't build a village-specific blood database. Build a location-agnostic blood donor network whose first pilot is Arab Mutair.**
 
 | Don't | Do |
 | --- | --- |
-| `ArabMuteerDonors`, `VillageBloodSystem` | `Donors`, `Locations`, `BloodRequests` |
+| `ArabMutairDonors`, `VillageBloodSystem` | `Donors`, `Locations`, `BloodRequests` |
 | `VillageName = "عرب مطير"` on every record | `LocalityID` → `Locations` (Country → Region → District → Locality) |
 | Hard-coded Egyptian phone rules | Per-country config (dial code, mobile prefixes, timezone) |
 | Hard-coded pilot location | The pilot is rows in `Locations` plus seed data |
@@ -94,7 +94,7 @@ The system must be **location-agnostic, storage-agnostic, privacy-first, API-bas
 ### 🆘 Requester (محتاج الدم)
 A patient's relative or friend, or hospital staff. There are no accounts in the MVP.
 - Sees public counts of available donors per blood type and area (no identities)
-- Creates a blood request: blood type(s), hospital, search area, units, urgency, contact phone
+- Creates a blood request: one blood type, hospital, search area, units, urgency, contact phone
 - Follows the request through a secret manage link: notification progress, accepted donors, and fulfil/cancel actions
 
 ### 🔑 Admin / Moderator (المسؤول)
@@ -114,7 +114,7 @@ Patient needs O+
       ↓
 Requester opens site → "I need blood" (أحتاج دم)
       ↓
-Enters: blood type(s), hospital, search area, units, urgency, name, phone, consent
+Enters: blood type, hospital, search area, units, urgency, name, phone, consent
       ↓
 Request created → requester gets a manage link
 Page shows: "14 matching donors in this area. Notifying them now."
@@ -188,7 +188,7 @@ This is a summary. Every numbered rule is in [docs/BUSINESS_RULES.md](docs/BUSIN
 ### Blood Request
 | ID | Requirement |
 | --- | --- |
-| FR-R01 | Requester creates a request: name, phone, blood type(s), hospital, search area, units, urgency, required date, consent |
+| FR-R01 | Requester creates a request: name, phone, **one** blood type (a second type needs a second request), hospital, search area, units, urgency, required date, consent |
 | FR-R02 | Urgency is one of `Normal`, `Urgent`, `Emergency` |
 | FR-R03 | Emergency requests are notified first, with the shortest wave interval, and highlighted for admins |
 | FR-R04 | Requester follows and closes the request through a secret manage link |
@@ -197,8 +197,8 @@ This is a summary. Every numbered rule is in [docs/BUSINESS_RULES.md](docs/BUSIN
 ### Matching & Notifications
 | ID | Requirement |
 | --- | --- |
-| FR-M01 | Match the **exact blood type(s) requested**. No compatibility logic |
-| FR-M02 | Only donors that are Active, Available, phone-verified, with a known and not-rejected blood type, inside the search area. Verified donors first; `Pending` donors only after those run out, labelled "not confirmed" (O1) |
+| FR-M01 | Match the **exact blood type requested**. No compatibility logic |
+| FR-M02 | Only donors that are Active, Available, phone-verified, with a known and not-rejected blood type, inside the search area. Verified donors first; `Pending` donors only after those run out, labelled "not confirmed" |
 | FR-M03 | Rank by location closeness, fairness rotation, last donation, and recent confirmation |
 | FR-M04 | Notify in waves; stop when enough donors have accepted; alert admins when donors run out |
 | FR-M05 | Public pages show **counts only**, never individual donors |
@@ -304,7 +304,7 @@ Unique: (`CountryCode`, `ParentID`, `Name`).
 | RequesterName | string | |
 | RequesterPhone | string | normalized |
 | RequesterConsentAt / ConsentVersion | datetime / string | |
-| BloodTypes | list | one or more of the 8 values |
+| BloodType | enum | exactly one of the 8 values |
 | HospitalName | string | |
 | HospitalLocationUrl | string | optional maps link |
 | SearchLocationID | ulid | FK → Locations, any level |
@@ -479,7 +479,7 @@ Plus: ☑ عمري 18 سنة أو أكثر.
 
 Rules that follow:
 
-- The system does **not** decide compatibility. It matches the **exact type(s) the hospital asked for**
+- The system does **not** decide compatibility. It matches the **exact type the hospital asked for**
 - The system does **not** decide who can donate. `LastDonationDate` is information and ranking only
 - A donor's blood type is a claim until an admin verifies it
 
@@ -491,7 +491,7 @@ Goal: run the pilot for **$0**, and allow low-cost upgrades only behind interfac
 | --- | --- | --- |
 | Code hosting + CI | GitHub (private repo) + GitHub Actions | free |
 | Frontend | **Vercel** free tier | `*.vercel.app` subdomain |
-| Backend | Free-tier Docker/PHP host (e.g. Render) | Sleeps when idle, so the cron below keeps it awake. Check the host's terms |
+| Backend | **Render** free tier (Docker) | Sleeps when idle, so the cron below keeps it awake. Re-check Render's free-tier terms before launch |
 | Scheduler + keep-alive | Free external cron (e.g. cron-job.org) → `/internal/tick` every minute | |
 | Database (MVP) | **Google Sheets API** via a service account | Free; per-minute quotas, so reads are cached |
 | Donor notifications | **Telegram Bot API** | Free and official |
@@ -575,7 +575,7 @@ FRONTEND_URL=
 - [x] Collect ideas and review business rules
 - [x] Constitution v1.0.1
 - [x] Business rules aligned with the constitution
-- [ ] Remaining open decisions (§20)
+- [x] All open decisions settled (§20)
 - [ ] Google Sheet + service account created
 - [ ] Telegram bot created
 
@@ -584,7 +584,7 @@ Each item is built as a Spec Kit feature (`/speckit-specify` → … → `/speck
 - Foundation, admin access, locations
 - Donor registration, Telegram verification, admin verification, donor self-service
 - Public counts, blood requests, matching and waves, donor responses, relay and escalation
-- Admin dashboard, hardening, **pilot in Arab Muteer**, collect feedback
+- Admin dashboard, hardening, **pilot in Arab Mutair**, collect feedback
 
 ### 🌱 Phase 2: Growth
 - WhatsApp Cloud API notifications
@@ -639,13 +639,15 @@ Each item is built as a Spec Kit feature (`/speckit-specify` → … → `/speck
 | 8 | Search: public counts only; contact only through a request |
 | 9 | Locations: generic Country → Region → District → Locality hierarchy |
 
-### ❓ Still open (defaults used until you decide)
+### ✅ Decided (2026-10-19, recorded in BUSINESS_RULES.md)
 
-| # | Question | Default |
+| # | Question | Decision |
 | --- | --- | --- |
-| O1 | Notify donors whose blood type is still `Pending`? | Yes, after verified donors run out, labelled "not confirmed" |
-| O2 | Allow a request to list more than one blood type? | Yes, only types the hospital named |
-| O3 | Must an admin approve a request before notifications? | No (rate limits + audit instead) |
-| O4 | Which free backend host? | Decide in the foundation slice |
-| O5 | Who are the pilot admins? | — |
-| O6 | Pilot spelling for seed data: "Arab Muteer" or "Arab Matir"? | Arab Muteer (عرب مطير) |
+| 10 | Notify donors whose blood type is still `Pending`? | **Yes**, only after verified donors run out, labelled "not confirmed" |
+| 11 | Can a request list more than one blood type? | **No**, one type per request |
+| 12 | Must an admin approve a request before notifications? | **No**: rate limits, audit, and donor-accepts-first instead |
+| 13 | Backend host | **Render** free tier + every-minute cron ping |
+| 14 | Pilot admins | **Owner + 1–2 trusted villagers**, each with their own account |
+| 15 | Pilot spelling | **Arab Mutair (عرب مطير)** |
+
+> ✅ **No open decisions remain.** See [docs/BUSINESS_RULES.md](docs/BUSINESS_RULES.md#-decisions) for the rules each decision affects.
