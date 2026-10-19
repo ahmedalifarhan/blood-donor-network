@@ -226,7 +226,7 @@ When a contributor proposes a change to either app, automated checks run: format
 - **SC-003**: Running the scheduler twice in a row, or twice at the same moment, leaves **exactly the same** results as running it once, in **100%** of test runs.
 - **SC-004**: The shared contract suite passes **100%** on every supported database, and switching databases requires **zero** changes outside the storage layer.
 - **SC-005**: **100%** of pages show the medical disclaimer and are excluded from search indexing.
-- **SC-006**: **100%** of changes with a failing check are blocked from merging.
+- **SC-006**: **100%** of changes with a failing check are blocked from merging. ⏭️ *Not enforced for now: branch protection (T066) was skipped by owner decision on 2026-10-19 (solo-maintained project); see `plan.md` → Complexity Tracking. The checks still run and report failures (FR-028), but they do not block merges.*
 - **SC-007**: Monthly running cost for hosting, storage, and scheduling is **$0**.
 - **SC-008**: An automated secret scan of the repository finds **zero** credentials.
 - **SC-009**: A new contributor can run both apps locally against the local database by following the README in **under 30 minutes**.

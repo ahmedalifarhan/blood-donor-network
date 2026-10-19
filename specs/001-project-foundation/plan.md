@@ -93,7 +93,7 @@ specs/001-project-foundation/
 
 ```text
 .github/workflows/
-├── ci.yml                          # backend · frontend · e2e · secrets-scan (required checks); planned PostgreSQL contract job (US5)
+├── ci.yml                          # backend · frontend · e2e · secrets-scan · docker-image (PostgreSQL run included); not required for merging while T066 is skipped
 └── ops-settings-set.yml            # workflow_dispatch → php artisan settings:set (DB_URL from the GitHub Environment)
 render.yaml                         # Render blueprint (docker, free, rootDir backend, DB_CONNECTION=pgsql, DB_URL secret; no database declared)
 
@@ -151,3 +151,4 @@ frontend/                           # Next.js 16 App Router, TS strict
 | Violation | Why Needed | Simpler Alternative Rejected Because |
 |-----------|------------|-------------------------------------|
 | ⚠️ **Principle V: scheduled backup deferred** (no longer a violation under constitution v1.1.0, which requires the backup only **before any personal data is stored**; kept here so the obligation stays visible) | The foundation stores only settings, step state, and operational logs, with no personal data. Building a `pg_dump` backup now adds private storage and a weekly step with nothing worth restoring | Building it now costs effort with no protective value. **Time-box**: a scheduled `pg_dump` backup with a tested restore MUST ship **before or with the first feature that stores personal data** (donor registration), and `/speckit-analyze` on that feature must flag its absence. **Tracked** as a deferred obligation in `docs/BUSINESS_RULES.md` DS-08, so the next spec picks it up |
+| ⚠️ **Quality gate: merges to `main` are not technically blocked** (constitution "CI MUST pass … before merge"; spec FR-028 "a change with a failing check MUST NOT be mergeable"; SC-006). **T066 (branch protection) skipped by owner decision, 2026-10-19** | The project is maintained by **one person**, who prefers direct pushes and merges to `main` without required pull requests, required status checks, or protection rules at this stage | Branch protection would force a pull request and a green CI run for every change, which the sole maintainer does not want yet. **Mitigation**: `ci` still runs on every push to `main`, every pull request, and on demand, and the maintainer checks its result before relying on a change. **Time-box**: revisit T066 when a **second person gets write access** or **before the pilot stores real donor data**, whichever comes first |

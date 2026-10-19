@@ -260,17 +260,19 @@ description: "Task list for 001-project-foundation"
 
 **Independent Test**: A PR that breaks one test cannot be merged; fixing it unblocks the merge (quickstart V11–V13).
 
+> ⏭️ **Merge blocking is skipped by owner decision (2026-10-19)**: with T066 skipped, CI reports failures but does not block merges, so the "cannot be merged" half of this test (V11) does not apply. The checks themselves (T064, T065, T057) are done and green; see the exception in `plan.md` → Complexity Tracking.
+
 ### Implementation for User Story 5
 
 - [X] T064 [US5] Create `.github/workflows/ci.yml` (triggers `pull_request` and `push` to `main`; `concurrency` cancel-in-progress) with jobs named exactly **`backend`** (PHP 8.3 via `shivammathur/setup-php` with `pdo_pgsql` and `pdo_sqlite`, composer cache, `composer lint`, `composer analyse`, `composer test`, plus the PostgreSQL contract run from T057), **`frontend`** (Node 24, `npm ci`, `lint`, `format:check`, `typecheck`, `test`, `build`), **`e2e`** (PHP 8.3 + Node 24, `composer install`, `npm ci`, `npx playwright install --with-deps chromium`, `npm run e2e`, upload `frontend/playwright-report` as artifact), **`secrets-scan`** (`gitleaks/gitleaks-action@v2` on full history). **Done 2026-10-19 (ci #2), with deviations**: see the US5 implementation notes
 - [X] T065 [P] [US5] Create `.github/pull_request_template.md` with a constitution checklist (Principles I–VII, tests-first for core rules, no secrets, docs updated) and `.gitleaks.toml` extending the default rules
-- [ ] T066 [US5] (operator) Following `specs/001-project-foundation/quickstart.md` §5 step 4, enable branch protection on `main` requiring checks `backend`, `frontend`, `e2e`, `secrets-scan`; then run validation **V11** with a deliberately failing PR and **V12–V13** from the CI results
+- [ ] T066 [US5] (operator) ⏭️ **SKIPPED by owner decision on 2026-10-19, not completed.** Reason: solo-maintained project; the owner keeps direct pushes and merges to `main` unrestricted (no required pull requests, no required status checks, no protection rules). No protection rule was created and V11 was not run. Recorded as a time-boxed exception in `plan.md` → Complexity Tracking (revisit when a second person gets write access or before the pilot stores real donor data). Original scope: following `specs/001-project-foundation/quickstart.md` §5 step 4, enable branch protection on `main` requiring checks `backend`, `frontend`, `e2e`, `secrets-scan`; then run validation **V11** with a deliberately failing PR and **V12–V13** from the CI results
 
-**Checkpoint**: All user stories are independently functional and gated by CI.
+**Checkpoint**: All user stories are independently functional and checked by CI (merges are not gated while T066 is skipped).
 
 > 🛠️ **Implementation notes (US5 + T057, 2026-10-19): verified on GitHub (run #2)**
 >
-> T057, T064, T065, and T080 were ticked on 2026-10-19 after ci #2 passed every job on GitHub. T066 (branch protection) is still open: `main` does not exist yet.
+> T057, T064, T065, and T080 were ticked on 2026-10-19 after ci #2 passed every job on GitHub. T066 (branch protection) was **skipped by owner decision** the same day; `main` now exists (created at `de1df97`, then fast-forwarded by the owner to `e329f4a`).
 >
 > | Topic | As built |
 > | --- | --- |
@@ -289,7 +291,7 @@ description: "Task list for 001-project-foundation"
 > | **Run #1, attempt 2** (re-run of `155e2f0`) | Same result as attempt 1 (same `LayoutProps` error, same container start-up failure): a re-run replays the old commit without the fixes |
 > | **Run #2** ([39277525010](https://github.com/ahmedalifarhan/blood-donor-network/actions/runs/39277525010), manual, `ef07710`) | ✅ **All 5 jobs green**, every step `success` (confirmed from the jobs API and from the 5 check runs on `ef07710`): `backend` 51 s (Pint, Larastan, SQLite tests, **PostgreSQL 17 tests**), `frontend` 142 s (lint, format, **typecheck**, test, build), `e2e` 56 s, `secrets-scan` 7 s, `docker-image` 73 s (build, `pdo_pgsql`, start, `/up`, 3 migrations **Ran**, health `running`) |
 > | **Deviations accepted on tick** | T057: whole backend suite on PostgreSQL 17 (`DB_CONNECTION=pgsql`, `DB_URL=…/contract_test`) instead of `tests/Contract --group=pgsql` with `TEST_DB_URL`, until T051 builds that harness. T064: `gitleaks-action@v3` (Node 24) instead of `@v2`, plus a `workflow_dispatch` trigger. T080: verified on a GitHub runner, not on the development machine |
-> | **Not yet exercised** | The `pull_request` and `push`-to-`main` triggers (only manual runs so far); they start working once `main` exists and pull requests are opened (T066). The `secrets-scan` full-history claim rests on the action's documented manual-run behavior; its log needs a signed-in view |
+> | **Not yet exercised** | The `pull_request` trigger (no pull request has been opened). The `push`-to-`main` trigger fired for the first time as **ci #3** ([39280209654](https://github.com/ahmedalifarhan/blood-donor-network/actions/runs/39280209654), `main@e329f4a`), which was still **queued** at 2026-10-19 15:53 UTC during an open GitHub incident ("Incident with Actions and Pages", Actions degraded); its result is not yet known. The `secrets-scan` full-history claim rests on the action's documented manual-run behavior; its log needs a signed-in view |
 > | **Runner notice** | GitHub: `ubuntu-latest` moves to Ubuntu 26 from 2026-10-19 (informational; no failures seen) |
 > | **Why "0 runs" earlier** | The first manual trigger did not create a run (GitHub recorded no run, check run, or check suite); the next click did. Actions was enabled throughout. Pushes to `feat/s0-foundation` never trigger `ci` by design (only `pull_request`, `push` to `main`, manual) |
 
@@ -304,7 +306,7 @@ description: "Task list for 001-project-foundation"
 - [ ] T069 Remove scaffold leftovers (example tests in `backend/tests/Feature/ExampleTest.php` and `backend/tests/Unit/ExampleTest.php`, unused `backend/resources/` assets, default `frontend/public/*.svg`), then make `composer analyse` (Larastan level 8) and `npm run typecheck` pass with zero errors
 - [ ] T070 [P] Add a "Run locally" section to `README.md` linking `specs/001-project-foundation/quickstart.md` §2–§3, and confirm a fresh clone runs both apps on SQLite in under 30 minutes (SC-009)
 - [ ] T071 (operator) Manual TalkBack screen-reader pass on an Android phone; record findings in `specs/001-project-foundation/checklists/a11y-manual.md`
-- [ ] T072 Run every validation scenario **V1–V14** and the launch checklist in `quickstart.md`; record pass/fail with date in `specs/001-project-foundation/checklists/validation.md`
+- [ ] T072 Run every validation scenario **V1–V14** (except **V11**, skipped with T066) and the launch checklist in `quickstart.md`; record pass/fail with date in `specs/001-project-foundation/checklists/validation.md`
 
 ---
 
@@ -397,7 +399,7 @@ Task: "Write backend/tests/Contract/ResilienceTest.php (C11, C12, C13)"
 | --- | --- | --- |
 | 1 | Setup + Foundational | Unit tests T008–T010, store setup T022 |
 | 2 | **US1**: live status page (MVP) | V1–V4 |
-| 3 | **US5**: CI gates (recommended early) | V11–V13 |
+| 3 | **US5**: CI gates (recommended early) | V12–V13 (V11 skipped with T066) |
 | 4 | **US2**: scheduler + operator health + keep-alive | V5–V8 |
 | 5 | **US3**: full contract suite on both drivers | V9 |
 | 6 | **US4**: settings | V10 |
@@ -410,7 +412,7 @@ With several AI agents or developers after Foundational:
 - Agent A: US1 (frontend + health endpoint)
 - Agent B: US2 (scheduler + operator health)
 - Agent C: US3 + US4 (backend-only, separate files)
-- Owner: operator tasks T040, T050, T066, T071
+- Owner: operator tasks T040, T050, T071 (T066 skipped by owner decision)
 
 ---
 
