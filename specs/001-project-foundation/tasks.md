@@ -162,7 +162,7 @@ description: "Task list for 001-project-foundation"
 - [X] T077 Deploy configuration: `backend/Dockerfile` runs migrations at container start (`AUTORUN_LARAVEL_MIGRATION=true`); `render.yaml` sets `DB_CONNECTION=pgsql` and asks for `DB_URL` (`sync: false`, no database declared); `backend/.env.example` documents `DB_CONNECTION` and `DB_URL`; `frontend/playwright.config.ts` starts the backend on a fresh, migrated SQLite file
 - [X] T078 Update docs: constitution v1.1.0, `README.md`, `docs/BUSINESS_RULES.md`, `spec.md`, `plan.md`, `research.md`, `data-model.md`, `contracts/`, `quickstart.md`, and this file
 - [X] T079 Verify on local PostgreSQL 17: migrations (up, re-run, rollback, up), the full backend suite on `blood_test`, a 20-process parallel-writer check, and the frontend → API → PostgreSQL health path. Add `docker-compose.yml` + `docker/postgres/init/` for local PostgreSQL, a `_test` database-name guard in `backend/tests/TestCase.php`, and exclude local SQLite files in `backend/.dockerignore`
-- [ ] T080 Build the Docker image locally (`docker build backend`) and run it against local PostgreSQL with the production environment (`APP_ENV=production`, `DB_CONNECTION=pgsql`, `DB_URL`, secrets): container start runs the migrations and `/api/v1/health` reports `running`. Blocked: Docker Desktop is not installed on the development machine (WSL install failed)
+- [ ] T080 Build the Docker image locally (`docker build backend`) and run it against local PostgreSQL with the production environment (`APP_ENV=production`, `DB_CONNECTION=pgsql`, `DB_URL`, secrets): container start runs the migrations and `/api/v1/health` reports `running`. Docker Desktop is not installed on the development machine (WSL install failed), so this now runs in CI as the `docker-image` job (see the US5 notes); tick it after that job is green on GitHub
 
 **Checkpoint**: The app runs on PostgreSQL or SQLite with only `DB_CONNECTION` / `DB_URL` changed, verified on a real PostgreSQL 17 server (T079). The Docker image is still unverified (T080).
 
@@ -267,6 +267,22 @@ description: "Task list for 001-project-foundation"
 - [ ] T066 [US5] (operator) Following `specs/001-project-foundation/quickstart.md` §5 step 4, enable branch protection on `main` requiring checks `backend`, `frontend`, `e2e`, `secrets-scan`; then run validation **V11** with a deliberately failing PR and **V12–V13** from the CI results
 
 **Checkpoint**: All user stories are independently functional and gated by CI.
+
+> 🛠️ **Implementation notes (US5 + T057, 2026-10-19): written, not yet run on GitHub**
+>
+> T057, T064, and T065 stay unchecked until the first green run of `ci` on GitHub.
+>
+> | Topic | As built |
+> | --- | --- |
+> | **Files** | `.github/workflows/ci.yml`, `.github/pull_request_template.md`, `.gitleaks.toml` |
+> | **Jobs** | `backend`, `frontend`, `e2e`, `secrets-scan` (the four required checks of T066) plus **`docker-image`** for T080 |
+> | **Triggers** | `pull_request`, `push` to `main`, and **`workflow_dispatch`** (added): GitHub has no `main` branch yet and the default branch is `feat/s0-foundation`, so a manual run is the only way to start CI before the first pull request. A manual run also gives `secrets-scan` the **full history** (push and pull-request runs scan only their own commits) |
+> | **T057 deviation** | `--group=pgsql` and `TEST_DB_URL` come from the T051 harness, which does not exist yet, so that command would run zero tests. Until T051, the `backend` job runs the **whole suite** on a `postgres:17` service with `DB_CONNECTION=pgsql` and `DB_URL=…/contract_test` (allowed by the `*_test` guard in `tests/TestCase.php`). T051 should switch it to the dataset form |
+> | **gitleaks** | `gitleaks/gitleaks-action@v3` instead of `@v2`: v3 only moves from Node 20 (deprecated by GitHub) to Node 24, same inputs. Personal-account repo, so no `GITLEAKS_LICENSE`. PR comments off (read-only token). Allowlist = three public test values only: the e2e `APP_KEY`, `blood_local_only`, `ci_only` |
+> | **`docker-image` (T080)** | Builds `backend/` exactly like Render, checks `pdo_pgsql`, starts the container with the production configuration against a `postgres:17` service, waits for `/up`, then requires 3 migrations **Ran** and `/api/v1/health` = `running`. Container logs are always printed |
+> | **Versions** | `actions/checkout@v7`, `actions/setup-node@v7`, `actions/cache@v6`, `actions/upload-artifact@v7`, `shivammathur/setup-php@v2` (all Node 24), from the actions' release tags on 2026-10-19 |
+> | **Checked locally** | Workflow YAML parses (5 jobs, pinned actions, `contents: read`); `.gitleaks.toml` parses; `composer lint` / `analyse` / `test` pass; 49/49 on local PostgreSQL; frontend `lint`, `format:check`, `typecheck`, `test` (15), `build` pass. **Not checkable locally**: the GitHub run itself, gitleaks, the Docker build (no Docker here) |
+> | **No secrets used** | Every credential in `ci.yml` is a throwaway value for disposable CI containers; the API container's `APP_KEY` is generated per run and masked |
 
 ---
 

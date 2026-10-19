@@ -1,0 +1,19 @@
+# Secret scan configuration (FR-030, SC-008; task T065).
+# Uses every default gitleaks rule. The allowlist names only values that are
+# deliberately public test fixtures; anything else that looks like a secret fails CI.
+title = "Blood Donor Network"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Public test-only values, never used outside local development or CI"
+regexTarget = "match"
+regexes = [
+  # frontend/playwright.config.ts: e2e APP_KEY, base64 of "e2e-only-app-key-not-a-secret!!".
+  '''base64:ZTJlLW9ubHktYXBwLWtleS1ub3QtYS1zZWNyZXQhIQ==''',
+  # docker-compose.yml, quickstart.md, README.md: local-only PostgreSQL password (127.0.0.1 only).
+  '''blood_local_only''',
+  # .github/workflows/ci.yml: password of the throwaway CI PostgreSQL service containers.
+  '''ci_only''',
+]

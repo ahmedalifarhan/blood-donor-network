@@ -1,0 +1,234 @@
+# Quality gates for every change (FR-028, SC-006, SC-008, SC-010; tasks T064, T057).
+# The four jobs backend, frontend, e2e, and secrets-scan are the required checks
+# for branch protection on main (T066). docker-image verifies the Render image (T080).
+# No repository secrets are used: every credential below is a throwaway CI value.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  # Manual run from the Actions tab (any branch). For secrets-scan this scans the full history.
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      # Disposable PostgreSQL for the PostgreSQL test run (T057). Its name ends in "_test",
+      # as the test guard in tests/TestCase.php requires.
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci_only
+          POSTGRES_DB: contract_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci -d contract_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          extensions: pdo_pgsql, pdo_sqlite
+          coverage: none
+          tools: composer:v2
+
+      - name: Locate the Composer cache
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v6
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: composer-${{ runner.os }}-${{ hashFiles('backend/composer.lock') }}
+          restore-keys: composer-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: composer install --no-interaction --no-progress --prefer-dist
+
+      - name: Style (Pint)
+        run: composer lint
+
+      - name: Static analysis (Larastan level 8)
+        run: composer analyse
+
+      - name: Tests on SQLite in memory
+        run: composer test
+
+      - name: Tests on PostgreSQL 17 (storage contract suite included)
+        env:
+          DB_CONNECTION: pgsql
+          DB_URL: postgresql://ci:ci_only@127.0.0.1:5432/contract_test
+        run: ./vendor/bin/pest
+
+  frontend:
+    name: frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  e2e:
+    name: e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          extensions: pdo_sqlite
+          coverage: none
+          tools: composer:v2
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: composer install --no-interaction --no-progress --prefer-dist
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install Chromium for Playwright
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      # Starts the backend on a fresh SQLite file and the production frontend build
+      # (frontend/playwright.config.ts), then runs the end-to-end and axe checks.
+      - name: End-to-end and accessibility tests
+        working-directory: frontend
+        run: npm run e2e
+
+      - name: Upload the Playwright report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: frontend/playwright-report
+          retention-days: 14
+          if-no-files-found: ignore
+
+  secrets-scan:
+    name: secrets-scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # Personal-account repository: no GITLEAKS_LICENSE needed. Uses .gitleaks.toml.
+      # Scope: the pushed or pull-request commits; the full history on a manual run.
+      - uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
+          GITLEAKS_ENABLE_COMMENTS: "false"
+
+  docker-image:
+    name: docker-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci_only
+          POSTGRES_DB: blood_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci -d blood_ci"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v7
+
+      # Same build as Render: rootDir backend, ./Dockerfile, context "." (render.yaml).
+      - name: Build the API image
+        run: docker build --tag blood-api:ci backend
+
+      - name: Check the image has the PostgreSQL driver
+        run: docker run --rm --entrypoint php blood-api:ci -m | grep -x pdo_pgsql
+
+      # Production settings as on Render, against a throwaway database. --network host
+      # lets the container reach the service at 127.0.0.1 and serve on port 8080.
+      - name: Start the container with the production configuration
+        run: |
+          APP_KEY="base64:$(openssl rand -base64 32)"
+          echo "::add-mask::$APP_KEY"
+          docker run --detach --name api --network host \
+            -e APP_ENV=production -e APP_DEBUG=false -e APP_KEY="$APP_KEY" \
+            -e DB_CONNECTION=pgsql -e DB_URL="postgresql://ci:ci_only@127.0.0.1:5432/blood_ci" \
+            -e CACHE_STORE=file -e SESSION_DRIVER=array -e QUEUE_CONNECTION=sync -e LOG_CHANNEL=stderr \
+            -e SCHEDULER_SECRET="$(openssl rand -hex 32)" -e OPERATOR_HEALTH_SECRET="$(openssl rand -hex 32)" \
+            -e FRONTEND_URL=https://frontend.example \
+            blood-api:ci
+
+      - name: Wait for the container to answer /up
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8080/up > /dev/null; then echo "up after ${i}x2 s"; exit 0; fi
+            sleep 2
+          done
+          echo "The container did not become healthy in 120 s" >&2
+          exit 1
+
+      - name: Migrations ran at container start
+        run: |
+          docker exec api php artisan migrate:status --no-ansi | tee migrate-status.txt
+          test "$(grep -c ' Ran' migrate-status.txt)" -eq 3
+
+      - name: Health reports running
+        run: |
+          body="$(curl -fsS http://127.0.0.1:8080/api/v1/health)"
+          echo "$body"
+          test "$(echo "$body" | jq -r .status)" = "running"
+
+      - name: Container logs
+        if: always()
+        run: docker logs api || true
