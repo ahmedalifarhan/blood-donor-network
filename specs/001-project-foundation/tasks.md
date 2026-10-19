@@ -97,6 +97,8 @@ description: "Task list for 001-project-foundation"
 > | **Hardening** | `config/filesystems.php` reduced to one private, unserved disk (removed public `GET`/`PUT /storage/{path}` routes); cache/session/queue defaults changed from `database` to `file`/`array`/`sync` |
 > | **Toolchain** | Composer needs `COMPOSER_MAX_PARALLEL_HTTP=1` on this Windows machine (parallel zip downloads hit file locks) |
 
+> 🔄 **Superseded on 2026-10-19 by [Phase 3b](#phase-3b-storage-migration-to-postgresql-2026-10-19)**: storage moved from Google Sheets to **PostgreSQL**. The Sheets and in-memory drivers, the `Table` layer, `CellCodec`, `Backoff`, `StoreRequestFailed`, `StoreSchemaManager`, `store:setup`, and `ops-store-setup.yml` were removed. **T006** (Google client), **T008/T011** (cell encoding), **T010/T013** (backoff; `StoreUnavailable` kept), **T015–T020** (tabs, drivers, provider), and **T022–T024** (`store:setup`) are historical. **T014** (contracts, minus `StoreSchemaManager`) and **T021** (`ConfigCheck`, now `DB_URL` for PostgreSQL) still apply.
+
 ---
 
 ## Phase 3: User Story 1 - Visitor sees a live, Arabic service status (Priority: P1) 🎯 MVP
@@ -126,7 +128,7 @@ description: "Task list for 001-project-foundation"
 - [X] T037 [US1] Implement `frontend/app/layout.tsx`: `<html lang="ar" dir="rtl">`, `IBM_Plex_Sans_Arabic` from `next/font/google` (subsets `arabic`, weights 400 and 600, `display: 'swap'`), `metadata.robots = { index: false, follow: false }`, title from `site.name`, `NextIntlClientProvider`, Radix `DirectionProvider dir="rtl"`, and `<SiteFooter />`
 - [X] T038 [US1] Implement `frontend/components/service-status.tsx` (client component, states and visuals exactly per `ui-status.md`; icons + text so color is never the only signal; spinner respects `prefers-reduced-motion`; Retry `Button` ≥ 44×44 px), statically rendered `frontend/app/page.tsx` showing `site.name` heading + `<ServiceStatus />`, and `frontend/app/not-found.tsx` rendering **only** `notFound.title`, `notFound.body`, and a home link labelled `notFound.home` (no hard-coded text anywhere: constitution IV); wrap any Latin text or digits inside Arabic sentences in `<bdi>`
 - [X] T039 [US1] Configure `frontend/playwright.config.ts`: Chromium mobile viewport 360×740, `webServer` entries starting the backend (`php artisan serve --port=8000` with `DATA_DRIVER=memory`, test secrets, `FRONTEND_URL=http://localhost:3000`) and the frontend (`npm run build && npm run start`, `NEXT_PUBLIC_API_BASE_URL=http://localhost:8000`)
-- [ ] T040 [US1] (operator) Deploy per `specs/001-project-foundation/quickstart.md` §4–§5 steps 1–2: run `ops-store-setup.yml` for **sandbox**, then for **production** (FR-022: production store created now but unused until pilot); Render blueprint pointing at the **sandbox** sheet; Vercel with root `frontend`. Then run validation scenarios **V1–V4**
+- [ ] T040 [US1] (operator) Deploy per `specs/001-project-foundation/quickstart.md` §5 steps 0–2: choose the PostgreSQL host (§1; **not** Render's expiring free database for real data) and record the choice in `plan.md` (a paid host needs the written decision of constitution VI); Render blueprint with `APP_KEY`, `DB_URL`, `FRONTEND_URL`, and check that the deploy log shows the three migrations; Vercel with root `frontend`. Then run validation scenarios **V1–V4**
 
 **Checkpoint**: User Story 1 is fully functional, deployed, and testable on its own.
 
@@ -141,6 +143,42 @@ description: "Task list for 001-project-foundation"
 > | **Results** | Backend 56 tests; frontend 15 unit + 7 e2e (axe: 0 violations; SC-001 page readable in ~2.2 s under throttling) |
 > | **Not verified locally** | Docker image (no Docker on this machine): first build happens on Render (T040) |
 
+> ℹ️ T026, T032, and T039 were later adapted to PostgreSQL / SQLite by T075–T077 (Phase 3b).
+
+---
+
+## Phase 3b: Storage migration to PostgreSQL (2026-10-19)
+
+**Goal**: Replace Google Sheets with **PostgreSQL** (deployed) and **SQLite** (local development and tests) behind the same repository contracts, with no change to the API or user-visible behavior.
+
+**Why**: owner decision on 2026-10-19 (constitution v1.1.0, Principle V). No Sheets store had been created yet, so no data had to be moved.
+
+**Independent Test**: `./vendor/bin/pest` and `npx playwright test` are green; `/api/v1/health` reports `limited` before `php artisan migrate` and `running` after it.
+
+- [X] T073 Create migrations `backend/database/migrations/2026_10_19_000001_create_settings_table.php`, `…000002_create_scheduler_steps_table.php`, `…000003_create_operational_logs_table.php` (ULID primary keys; unique `settings.key` and `scheduler_steps.step_name`; UTC `timestamptz(0)`; `operational_logs.context` as **text**, because masking may truncate it) and models `backend/app/Models/{Setting,SchedulerStep,OperationalLog}.php` (`OperationalLog` refuses update and delete)
+- [X] T074 Implement `backend/app/Repositories/Eloquent/` (`EloquentSettingsRepository`, `EloquentSchedulerStateRepository`, `EloquentOperationalLogRepository` with atomic `INSERT … ON CONFLICT` upserts; `DatabaseStoreProbe` checking the tables and columns in `backend/config/store-schema.php`; trait `GuardsStoreAccess` turning database errors into `StoreUnavailable`) with tests in `backend/tests/Contract/` covering **C1, C2, C3, C6, C7, C8, C13** on SQLite (C5 sequentially only)
+- [X] T075 Rewire `backend/app/Providers/StorageServiceProvider.php` to the Eloquent implementations; `ConfigCheck` requires `DB_URL` when `DB_CONNECTION=pgsql`; the `pgsql` connection runs in UTC; remove `store:setup`; adapt `backend/tests/Feature/HealthTest.php` to `RefreshDatabase` (same 10 behaviors) and add `backend/tests/Unit/ConfigCheckTest.php`
+- [X] T076 Remove the Sheets driver, in-memory driver, `Table` layer, `CellCodec`, `Backoff`, `StoreRequestFailed`, `SchemaChange`, `StoreSchemaManager`, their tests, `.github/workflows/ops-store-setup.yml`, `DATA_DRIVER`, and the `google/apiclient` package
+- [X] T077 Deploy configuration: `backend/Dockerfile` runs migrations at container start (`AUTORUN_LARAVEL_MIGRATION=true`); `render.yaml` sets `DB_CONNECTION=pgsql` and asks for `DB_URL` (`sync: false`, no database declared); `backend/.env.example` documents `DB_CONNECTION` and `DB_URL`; `frontend/playwright.config.ts` starts the backend on a fresh, migrated SQLite file
+- [X] T078 Update docs: constitution v1.1.0, `README.md`, `docs/BUSINESS_RULES.md`, `spec.md`, `plan.md`, `research.md`, `data-model.md`, `contracts/`, `quickstart.md`, and this file
+- [X] T079 Verify on local PostgreSQL 17: migrations (up, re-run, rollback, up), the full backend suite on `blood_test`, a 20-process parallel-writer check, and the frontend → API → PostgreSQL health path. Add `docker-compose.yml` + `docker/postgres/init/` for local PostgreSQL, a `_test` database-name guard in `backend/tests/TestCase.php`, and exclude local SQLite files in `backend/.dockerignore`
+- [ ] T080 Build the Docker image locally (`docker build backend`) and run it against local PostgreSQL with the production environment (`APP_ENV=production`, `DB_CONNECTION=pgsql`, `DB_URL`, secrets): container start runs the migrations and `/api/v1/health` reports `running`. Blocked: Docker Desktop is not installed on the development machine (WSL install failed)
+
+**Checkpoint**: The app runs on PostgreSQL or SQLite with only `DB_CONNECTION` / `DB_URL` changed, verified on a real PostgreSQL 17 server (T079). The Docker image is still unverified (T080).
+
+> 🛠️ **Implementation notes (Phase 3b, 2026-10-19)**
+>
+> | Topic | As built |
+> | --- | --- |
+> | **Results on SQLite** | Backend 48 tests (Pint, Larastan level 8 clean); frontend 15 unit + 7 e2e |
+> | **Results on PostgreSQL 17.11** | Migrations up / no-op re-run / rollback / up; column types as designed (`char(26)`, `timestamptz(0)`, unique indexes, `text` context); backend **48/48** on `blood_test`; session timezone UTC (server default was Africa/Cairo); 20 parallel processes → 1 `WaveSize` row, 21 settings, 20 unique log IDs; browser → `/api/v1/health` → `running` |
+> | **Test count** | 80 → 48 after removing the Sheets-only `BackoffTest` and `CellCodecTest` (32 cases) |
+> | **Local PostgreSQL** | Portable EnterpriseDB binaries (not code-signed) under the user profile, started with `pg_ctl` on `127.0.0.1` only; Docker alternative in `docker-compose.yml` (untested) |
+> | **Local PHP** | `pdo_pgsql` ships with PHP but is off in `php.ini`; `php -d extension=pdo_pgsql` works for one-off commands, `php artisan serve` needs it enabled in `php.ini` (quickstart §2.2) |
+> | **Display quirk** | `php artisan db:show` prints the unused `DB_DATABASE` default (`laravel`) when `DB_URL` is set; the real connection is the URL's database (checked with `current_database()`) |
+> | **Review fixes (pre-commit)** | `DB_URL` now applies only to the `pgsql` connection (a `sqlite`-named connection with a PostgreSQL URL had silently become PostgreSQL, bypassing the test guard and letting e2e `migrate:fresh` hit the dev database); the test guard checks the resolved driver + database name (SQLite `:memory:` or `*_test` only); e2e blanks `DB_URL`; `last_error` is masked **before** the 500-char cut (masking lengthens digit runs); 5 s PostgreSQL connect timeout |
+> | **Not verified** | Docker image build and container start (T080); the first Render deploy (T040) |
+
 ---
 
 ## Phase 4: User Story 2 - Scheduler keeps the platform awake and runs timed work safely (Priority: P2)
@@ -152,14 +190,14 @@ description: "Task list for 001-project-foundation"
 ### Tests for User Story 2 ⚠️
 
 - [ ] T041 [P] [US2] Write `backend/tests/Unit/PeriodKeyTest.php`: a 1-minute step at `2026-10-19 10:15:42 UTC` has key `2026-10-19T10:15Z`; keys always UTC; comparison `LastPeriod ≥ current` works lexically for the format
-- [ ] T042 [P] [US2] Write `backend/tests/Feature/TickTest.php` (memory driver, test steps registered via config): correct `X-Scheduler-Secret` → `200` with heartbeat `success`; second call in same minute → `skipped`; step lock held → `busy`; a throwing test step yields `failure` while other steps still run, appends one `scheduler.step_failed` log (`level=error`, `LastError` ≤ **500 chars**, masked) and increments `ConsecutiveFailures`; after a 10-minute gap exactly **one** run happens; missing/wrong secret → `401` with empty body and no step runs; the 11th refused call within a minute from one IP → `429`; refused calls in one minute produce **one** `scheduler.refused` entry with `count`; missing required config → `503` plus exactly **one** `config.missing` entry across repeated calls within an hour; routine successes create **no** `OperationalLogs` rows; response matches `TickResult` in `contracts/http-api.yaml`
+- [ ] T042 [P] [US2] Write `backend/tests/Feature/TickTest.php` (`RefreshDatabase` on SQLite, test steps registered via config): correct `X-Scheduler-Secret` → `200` with heartbeat `success`; second call in same minute → `skipped`; step lock held → `busy`; a throwing test step yields `failure` while other steps still run, appends one `scheduler.step_failed` log (`level=error`, `LastError` ≤ **500 chars**, masked) and increments `ConsecutiveFailures`; after a 10-minute gap exactly **one** run happens; missing/wrong secret → `401` with empty body and no step runs; the 11th refused call within a minute from one IP → `429`; refused calls in one minute produce **one** `scheduler.refused` entry with `count`; missing required config → `503` plus exactly **one** `config.missing` entry across repeated calls within an hour; routine successes create **no** `operational_logs` rows; response matches `TickResult` in `contracts/http-api.yaml`
 - [ ] T043 [P] [US2] Write `backend/tests/Feature/HealthDetailsTest.php`: no credentials → `401` + `WWW-Authenticate: Basic realm="operator"`; wrong password → `401`; 11th failure in a minute → `429`; `operator` + correct secret → body matching `DetailedHealth` (driver, version, store.reachable/structureComplete/missing, `config.missing` names only and never values, `scheduler.lastSuccessAt`, steps list)
 
 ### Implementation for User Story 2
 
 - [ ] T044 [P] [US2] Create `backend/app/Scheduler/Step.php` interface (`name(): string`, `periodMinutes(): int`, `maxRuntimeSeconds(): int`, `run(string $periodKey): void`) and `backend/app/Scheduler/PeriodKey.php` (`for(CarbonImmutable $nowUtc, int $minutes): string`, format `Y-m-d\TH:i\Z` floored to the period) to pass T041
 - [ ] T045 [US2] Create `backend/config/scheduler.php` (ordered list of step classes), `backend/app/Scheduler/StepRegistry.php`, and `backend/app/Scheduler/Steps/HeartbeatStep.php` (period 1 min, max runtime 20 s; its only effect is the state update done by the runner)
-- [ ] T046 [US2] Implement `backend/app/Scheduler/TickRunner.php` per research R6: for each step, non-blocking `Cache::lock("step:{name}", maxRuntime)` → `busy` if held; read state → `skipped` if `LastPeriod ≥ current`; run; on success save `LastPeriod`, `LastRunAt`, `LastOutcome=success`, `LastSuccessAt`, `ConsecutiveFailures=0`; on exception save `LastRunAt`, `LastOutcome=failure`, `LastError` (masked, ≤ 500 chars), `ConsecutiveFailures+1` and append `scheduler.step_failed`; stop starting new steps after a **25 s** total budget (remaining → `skipped`); write **one** `Log::info` line per step per tick to the host log (`stderr`) with step, period, and outcome. Routine successes go **only** there, never to `OperationalLogs` (FR-032); return outcomes
+- [ ] T046 [US2] Implement `backend/app/Scheduler/TickRunner.php` per research R6: for each step, non-blocking `Cache::lock("step:{name}", maxRuntime)` → `busy` if held; read state → `skipped` if `LastPeriod ≥ current`; run; on success save `LastPeriod`, `LastRunAt`, `LastOutcome=success`, `LastSuccessAt`, `ConsecutiveFailures=0`; on exception save `LastRunAt`, `LastOutcome=failure`, `LastError` (masked, ≤ 500 chars), `ConsecutiveFailures+1` and append `scheduler.step_failed`; stop starting new steps after a **25 s** total budget (remaining → `skipped`); write **one** `Log::info` line per step per tick to the host log (`stderr`) with step, period, and outcome. Routine successes go **only** there, never to `operational_logs` (FR-032); return outcomes
 - [ ] T047 [P] [US2] Implement `backend/app/Services/RefusedCallAggregator.php`: per-minute cache counter plus a set of masked IPs (`/24` or `/48`); when a new minute begins (on the next refused call or the next successful tick) flush the previous minute as **one** `OperationalLogRepository::append` with event `scheduler.refused`, level `warning`, actor `Anonymous`, context `{count, windowStart, ips}`
 - [ ] T048 [US2] Implement `backend/app/Http/Middleware/SchedulerSecret.php` (`hash_equals` against `config('scheduler.secret')`; on failure record via `RefusedCallAggregator`, apply rate limiter `tick-refused` 10/min per IP, return empty `401` or `429`), `backend/app/Http/Resources/TickResultResource.php`, `backend/app/Http/Controllers/Api/V1/TickController.php` (`503` when `ConfigCheck` reports missing names; in that case, if the store is reachable, append a `config.missing` entry (level `error`, actor `System`, context `{"missing": [names]}`) **at most once per hour**, tracked with a cache flag), and route `POST /internal/tick` in `backend/routes/api.php`
 - [ ] T049 [US2] Implement `backend/app/Http/Middleware/OperatorBasicAuth.php` (username `operator`, password `OPERATOR_HEALTH_SECRET`, `hash_equals`, `WWW-Authenticate: Basic realm="operator"`, 10 failures/min per IP → `429`), add `HealthService::details()` in `backend/app/Services/HealthService.php` (fields per `DetailedHealth`; `version` from `APP_VERSION`), `backend/app/Http/Resources/DetailedHealthResource.php`, `backend/app/Http/Controllers/Api/V1/HealthDetailsController.php`, and route `GET /health/details`
@@ -171,24 +209,26 @@ description: "Task list for 001-project-foundation"
 
 ## Phase 5: User Story 3 - Contributors can swap or extend storage safely (Priority: P3)
 
-**Goal**: One shared contract suite (C1–C13) proves the Sheets and InMemory drivers behave identically, and it never touches production.
+**Goal**: One shared contract suite (C1–C13) proves the Eloquent repositories behave identically on **SQLite** and **PostgreSQL**, and it never touches production.
 
-**Independent Test**: `./vendor/bin/pest tests/Contract` (memory) and `./vendor/bin/pest tests/Contract --group=sheets` (sandbox) are both 100% green with only configuration changed (quickstart V9).
+**Independent Test**: `./vendor/bin/pest tests/Contract` (SQLite in memory) and the same suite with `TEST_DB_URL` pointing at a disposable PostgreSQL database are both 100% green with only configuration changed (quickstart V9).
+
+> ℹ️ T074 already covers **C1, C2, C3, C6, C7, C8, C13** on SQLite (C5 only sequentially) in `backend/tests/Contract/*Test.php`. This phase adds the PostgreSQL run and the remaining cases.
 
 ### Tests for User Story 3 ⚠️
 
-- [ ] T051 [US3] Create the contract harness: `backend/tests/Datasets/Stores.php` defining dataset `stores` (`memory` always; `sheets` only when `TEST_GOOGLE_SHEET_ID` is set) and `backend/tests/Contract/StoreFactory.php` building the five repositories per driver and resetting data rows between tests; in `backend/tests/Contract/SandboxGuard.php` abort the run unless the spreadsheet title ends with **`[sandbox]`**, and read only `TEST_GOOGLE_SHEET_ID` (never `GOOGLE_SHEET_ID`); tag all Sheets cases with group `sheets`
-- [ ] T052 [P] [US3] Write `backend/tests/Contract/RoundTripTest.php` covering **C1** (values listed in T008 read back byte-identical), **C8** (UTC `Z` timestamps unchanged), **C9** (shuffled header order still maps by name), **C10** (unknown extra column ignored and preserved on update)
-- [ ] T053 [P] [US3] Write `backend/tests/Contract/RepositoryBehaviorTest.php` covering **C2** (two upserts on one key → one row, latest value), **C3** (one row per `StepName`), **C6** (ULIDs 26 chars, monotonic by creation), **C7** (phone in log context stored as `2010****5678`)
-- [ ] T054 [P] [US3] Write `backend/tests/Contract/ConcurrencyTest.php` covering **C4** (20 concurrent upserts on different keys → 20 rows) and **C5** (20 concurrent appends → 20 unique ULIDs, all readable) using a `Symfony\Component\Process` pool that runs a testing-only command `backend/tests/Support/ContractWriteCommand.php` (registered only when `APP_ENV=testing`). For the **memory** driver, every child process MUST use `CACHE_STORE=file` with one shared temporary cache directory created per test, so all processes see the same state and the same `store:write` lock
-- [ ] T055 [P] [US3] Write `backend/tests/Contract/ResilienceTest.php` covering **C11** (`apply()` twice → second returns no changes), **C12** (two 429s then success within the 8 s budget; Guzzle `MockHandler` for Sheets, `failNext` for memory), **C13** (persistent failure → `StoreUnavailable`, no partial row)
+- [ ] T051 [US3] Create the contract harness: a Pest dataset `connections` in `backend/tests/Datasets/Connections.php` (`sqlite` always; `pgsql` only when `TEST_DB_URL` is set) applied to every test in `backend/tests/Contract/`, each running on a freshly migrated database; a guard in `backend/tests/Contract/DatabaseGuard.php` that aborts unless the PostgreSQL database name ends with **`_test`**, and that reads only `TEST_DB_URL` (never `DB_URL`); tag PostgreSQL cases with group `pgsql`
+- [ ] T052 [P] [US3] Extend the round-trip tests for **C10** (a column added by a later migration is ignored by repositories that do not know it, and kept on update)
+- [ ] T053 [P] [US3] Move the existing C2, C3, C6, C7 tests onto the `connections` dataset so they run on both databases
+- [ ] T054 [P] [US3] Write `backend/tests/Contract/ConcurrencyTest.php` covering **C4** (20 concurrent upserts on different keys → 20 rows) and **C5** (20 concurrent appends → 20 unique ULIDs, all readable) using a `Symfony\Component\Process` pool that runs a testing-only command `backend/tests/Support/ContractWriteCommand.php` (registered only when `APP_ENV=testing`). Runs on **PostgreSQL only** (group `pgsql`), because SQLite in memory is not shared between processes
+- [ ] T055 [P] [US3] Write `backend/tests/Contract/ResilienceTest.php` covering **C11** (`php artisan migrate` twice → second prints `Nothing to migrate`), **C12** (an unreachable database raises `StoreUnavailable` within the 8 s budget, without retries), **C13** (failure in the middle of a write → `StoreUnavailable`, no partial row)
 
 ### Implementation for User Story 3
 
-- [ ] T056 [US3] Run the suite on both drivers and fix any divergence in `backend/app/Repositories/Sheets/` or `backend/app/Repositories/InMemory/` until **C1–C13** pass on memory and on the sandbox sheet
-- [ ] T057 [US3] Create `.github/workflows/contract-sheets.yml`: triggers `push` to `main`, `pull_request` with paths `backend/app/Repositories/**` and `backend/tests/Contract/**`, and `workflow_dispatch`; uses GitHub Environment `sandbox` secrets (`TEST_GOOGLE_SHEET_ID`, `GOOGLE_SERVICE_ACCOUNT_JSON`); runs `./vendor/bin/pest tests/Contract --group=sheets`; `concurrency` group to avoid parallel runs against the same sheet
+- [ ] T056 [US3] Run the suite on both databases and fix any divergence in `backend/app/Repositories/Eloquent/` until **C1–C8, C10–C13** pass on SQLite and PostgreSQL (C9 was Sheets-only and is retired)
+- [ ] T057 [US3] Add the PostgreSQL contract run to the `backend` job of `.github/workflows/ci.yml` (T064): a `postgres:17` service container (same major version as local development), database `contract_test`, `TEST_DB_URL` set from the service, `./vendor/bin/pest tests/Contract --group=pgsql`. No secrets are needed
 
-**Checkpoint**: Storage is swappable by configuration, proven by one suite.
+**Checkpoint**: Storage is swappable by configuration, proven by one suite on both databases.
 
 ---
 
@@ -208,7 +248,7 @@ description: "Task list for 001-project-foundation"
 - [ ] T060 [P] [US4] Create `backend/config/settings.php` returning `['definitions' => [ … ]]`, a **list** of arrays each with a `key` field (never nested by key, because keys contain dots and `+`/`-`), holding exactly these 19 definitions (key, type, default, min, max, description): `WaveSize` int 5 (1–50); `WaveIntervalMinutes.Emergency` int 5 (1–120); `WaveIntervalMinutes.Urgent` int 10 (1–240); `WaveIntervalMinutes.Normal` int 30 (5–1440); `AcceptTargetMultiplier` int 2 (1–5); `RotationDays` int 7 (0–60); `PublicCountThreshold` int 3 (1–20); `QuietHours` timeRange `23:00-07:00`; `EmergencyNoAcceptAlertMinutes` int 15 (1–240); `ShortageThreshold.A+`, `.A-`, `.B+`, `.B-`, `.AB+`, `.AB-`, `.O+`, `.O-` int 5 (0–1000); `AdminWhatsAppNumber` phoneOrEmpty empty; `ConsentVersion` string `1`
 - [ ] T061 [US4] Implement `backend/app/Services/SettingsService.php`, indexing `config('settings.definitions')` into a map by the exact `key` string. **Never** look settings up with Laravel dot notation (`config('settings.WaveIntervalMinutes.Emergency')` would split the key). Methods: `get(string $key): int|string`, `all(): array` (with source), `set(string $key, string $value, string $by): void` (validate → `SettingsRepository::upsert` → append `setting.changed` with old/new, level `warning`, actor `Operator`, `actorRef = $by`); overrides cached 60 s and cache cleared on `set`
 - [ ] T062 [US4] Implement `backend/app/Console/Commands/SettingsList.php`, `SettingsSet.php`, `SettingsReset.php` with exit codes and output per `contracts/operator-commands.md` (`--by` required for writes; never print secrets)
-- [ ] T063 [P] [US4] Create `.github/workflows/ops-settings-set.yml`: `workflow_dispatch` inputs `environment` (`sandbox`/`production`), `key`, `value`, `by`; GitHub Environment secrets; runs `php artisan settings:set "$KEY" "$VALUE" --by="$BY"` with inputs passed via `env:` (never interpolated directly into the shell script)
+- [ ] T063 [P] [US4] Create `.github/workflows/ops-settings-set.yml`: `workflow_dispatch` inputs `environment` (`sandbox`/`production`), `key`, `value`, `by`; GitHub Environment secrets `DB_URL` (with `DB_CONNECTION=pgsql`); runs `php artisan settings:set "$KEY" "$VALUE" --by="$BY"` with inputs passed via `env:` (never interpolated directly into the shell script). ⚠️ The database must accept connections from GitHub Actions runners; if the host restricts by IP, document the alternative (run the command from the operator's machine)
 
 **Checkpoint**: Settings work with defaults and operator changes.
 
@@ -222,7 +262,7 @@ description: "Task list for 001-project-foundation"
 
 ### Implementation for User Story 5
 
-- [ ] T064 [US5] Create `.github/workflows/ci.yml` (triggers `pull_request` and `push` to `main`; `concurrency` cancel-in-progress) with jobs named exactly **`backend`** (PHP 8.3 via `shivammathur/setup-php`, composer cache, `composer lint`, `composer analyse`, `composer test`), **`frontend`** (Node 24, `npm ci`, `lint`, `format:check`, `typecheck`, `test`, `build`), **`e2e`** (PHP 8.3 + Node 24, `composer install`, `npm ci`, `npx playwright install --with-deps chromium`, `npm run e2e`, upload `frontend/playwright-report` as artifact), **`secrets-scan`** (`gitleaks/gitleaks-action@v2` on full history)
+- [ ] T064 [US5] Create `.github/workflows/ci.yml` (triggers `pull_request` and `push` to `main`; `concurrency` cancel-in-progress) with jobs named exactly **`backend`** (PHP 8.3 via `shivammathur/setup-php` with `pdo_pgsql` and `pdo_sqlite`, composer cache, `composer lint`, `composer analyse`, `composer test`, plus the PostgreSQL contract run from T057), **`frontend`** (Node 24, `npm ci`, `lint`, `format:check`, `typecheck`, `test`, `build`), **`e2e`** (PHP 8.3 + Node 24, `composer install`, `npm ci`, `npx playwright install --with-deps chromium`, `npm run e2e`, upload `frontend/playwright-report` as artifact), **`secrets-scan`** (`gitleaks/gitleaks-action@v2` on full history)
 - [ ] T065 [P] [US5] Create `.github/pull_request_template.md` with a constitution checklist (Principles I–VII, tests-first for core rules, no secrets, docs updated) and `.gitleaks.toml` extending the default rules
 - [ ] T066 [US5] (operator) Following `specs/001-project-foundation/quickstart.md` §5 step 4, enable branch protection on `main` requiring checks `backend`, `frontend`, `e2e`, `secrets-scan`; then run validation **V11** with a deliberately failing PR and **V12–V13** from the CI results
 
@@ -237,7 +277,7 @@ description: "Task list for 001-project-foundation"
 - [ ] T067 [P] Write `backend/tests/Feature/NoLeakTest.php`: for every public route (`/health`, refused `/internal/tick`, unauthenticated `/health/details`) assert the response body contains no run of 9+ digits, no env var values, and no host names (constitution workflow gate)
 - [ ] T068 [P] Add security headers in `frontend/next.config.ts` (`Referrer-Policy: strict-origin-when-cross-origin`, `X-Content-Type-Options: nosniff`, `Permissions-Policy: camera=(), microphone=(), geolocation=()`)
 - [ ] T069 Remove scaffold leftovers (example tests in `backend/tests/Feature/ExampleTest.php` and `backend/tests/Unit/ExampleTest.php`, unused `backend/resources/` assets, default `frontend/public/*.svg`), then make `composer analyse` (Larastan level 8) and `npm run typecheck` pass with zero errors
-- [ ] T070 [P] Add a "Run locally" section to `README.md` linking `specs/001-project-foundation/quickstart.md` §2–§3, and confirm a fresh clone runs both apps on the memory store in under 30 minutes (SC-009)
+- [ ] T070 [P] Add a "Run locally" section to `README.md` linking `specs/001-project-foundation/quickstart.md` §2–§3, and confirm a fresh clone runs both apps on SQLite in under 30 minutes (SC-009)
 - [ ] T071 (operator) Manual TalkBack screen-reader pass on an Android phone; record findings in `specs/001-project-foundation/checklists/a11y-manual.md`
 - [ ] T072 Run every validation scenario **V1–V14** and the launch checklist in `quickstart.md`; record pass/fail with date in `specs/001-project-foundation/checklists/validation.md`
 
@@ -252,6 +292,7 @@ description: "Task list for 001-project-foundation"
 | **1 Setup** | — | Everything |
 | **2 Foundational** | Setup | All user stories |
 | **3 US1 (P1)** 🎯 | Foundational | — |
+| **3b PostgreSQL migration** | Foundational, US1 | US2–US5 (they build on the Eloquent repositories) |
 | **4 US2 (P2)** | Foundational; **T049 extends `HealthService` from T029 (US1)** | — |
 | **5 US3 (P3)** | Foundational | — |
 | **6 US4 (P4)** | Foundational | — |
@@ -357,4 +398,4 @@ With several AI agents or developers after Foundational:
 - Commit after each task or logical group
 - Stop at any checkpoint to validate story independently
 - Avoid: vague tasks, same file conflicts, cross-story dependencies that break independence
-- 🧪 Never point any test at the production spreadsheet. The sandbox guard (T051) enforces this
+- 🧪 Never point any test at the production database. Tests use SQLite in memory or a disposable PostgreSQL database; the database guard (T051) enforces this

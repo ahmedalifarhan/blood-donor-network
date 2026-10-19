@@ -3,7 +3,7 @@
 namespace App\Repositories\Data;
 
 /**
- * One row of the append-only OperationalLogs tab (data-model.md §3).
+ * One row of the append-only operational_logs table (data-model.md §3).
  * `id` and `createdAt` are assigned by the repository on append.
  */
 final readonly class LogEntry

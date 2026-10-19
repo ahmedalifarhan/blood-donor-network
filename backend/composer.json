@@ -6,7 +6,6 @@
     "license": "proprietary",
     "require": {
         "php": "^8.3",
-        "google/apiclient": "^2.20",
         "laravel/framework": "^13.0",
         "laravel/tinker": "^3.0",
         "symfony/uid": "^7.4"
@@ -48,9 +47,8 @@
         "analyse": "phpstan analyse --memory-limit=1G",
         "test": [
             "@php artisan config:clear --ansi",
-            "pest --exclude-group=sheets"
+            "pest"
         ],
-        "pre-autoload-dump": "Google\\Task\\Composer::cleanup",
         "post-autoload-dump": [
             "Illuminate\\Foundation\\ComposerScripts::postAutoloadDump",
             "@php artisan package:discover --ansi"
@@ -65,10 +63,7 @@
     "extra": {
         "laravel": {
             "dont-discover": []
-        },
-        "google/apiclient-services": [
-            "Sheets"
-        ]
+        }
     },
     "config": {
         "optimize-autoloader": true,

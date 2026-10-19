@@ -1,10 +1,30 @@
 <!--
 SYNC IMPACT REPORT (scratch — remove before committing)
-Version change: 1.0.0 → 1.0.1 (PATCH)
-Bump rationale: wording only. The governance precedence list now also names feature specs,
-and Principle IV's pilot example uses the settled spelling "Arab Mutair". No rule changed.
+Version change: 1.0.1 → 1.1.0 (MINOR)
+Bump rationale: owner decision on 2026-10-19 to replace Google Sheets with PostgreSQL. Principle V
+keeps its name and intent (storage behind repositories); its Sheets-only rules (RAW writes,
+formula neutralizing, global write lock, single instance, read cache + 429 backoff, private
+spreadsheet, Drive backup, "migrate to SQL when…" triggers) are replaced by database rules
+(migrations only, bound parameters, constraints + transactions, UTC, no manual edits, pg_dump
+backup). No principle was added or removed, so MINOR rather than MAJOR.
 
-Previous change: (unratified template) → 1.0.0, first ratification on 2026-10-18.
+Modified principles:
+  III. One Phone, One Verified Donor: duplicate check now relies on a unique constraint and a
+       transaction instead of an application-level write lock.
+  V.   Storage-Agnostic Behind Repositories: rules rewritten for PostgreSQL (see above).
+Modified sections:
+  Technology & Architecture Constraints: "MVP store"/"Future store" rows → one "Store" row.
+  Development Workflow & Quality Gates: contract tests run on SQLite + PostgreSQL, not a sandbox
+       spreadsheet.
+
+Follow-up TODOs:
+  - Choose the PostgreSQL host. Render's free database expires after 30 days, so a paid host
+    needs the written decision Principle VI requires (record it in the feature plan).
+  - Add the PostgreSQL contract-test run to CI (US5) and the pg_dump backup (DS-08) before any
+    personal data is stored.
+
+Previous change: 1.0.0 → 1.0.1 (PATCH), wording only (precedence list names feature specs;
+"Arab Mutair" spelling). Before that: (unratified template) → 1.0.0 on 2026-10-18.
 
 Principles defined (template slot → title):
   PRINCIPLE_1 → I. Not a Medical Authority (NON-NEGOTIABLE)
@@ -98,8 +118,8 @@ per request is the only model that protects donors without slowing the honest re
   applies the country's dialing rules from configuration, and rejects non-mobile numbers.
 - A normalized phone number MUST identify at most one donor record, including inactive records.
   A returning donor is reactivated, never re-created. Name MUST NOT be used as a duplicate key.
-- Because the MVP store has no unique constraints, the duplicate check and the insert MUST run
-  inside the same application-level write lock.
+- The normalized phone MUST be protected by a database unique constraint, and the duplicate check
+  and the insert MUST run in the same transaction.
 - A duplicate response MUST NOT confirm that a number is registered. It directs the person to
   their manage link or the admin.
 - A donor MUST have a verified phone before receiving request notifications. Verification sits
@@ -129,27 +149,30 @@ config, not by rewriting code.
 ### V. Storage-Agnostic Behind Repositories
 
 - All persistence MUST go through repository interfaces in the Laravel backend. Controllers,
-  services, jobs, and the frontend MUST NOT call the Google Sheets API (or any database) directly.
-- The active store is selected by configuration (`DATA_DRIVER=sheets|mysql|pgsql`). Switching
-  stores MUST NOT require changes to services, API contracts, or the frontend.
-- Every repository implementation MUST pass the same repository contract test suite.
-- While Google Sheets is the store:
+  services, jobs, and the frontend MUST NOT query the database directly; Eloquent models are
+  used only inside repository implementations.
+- The store is PostgreSQL in deployed environments and SQLite for local development and
+  automated tests, selected with Laravel's `DB_CONNECTION`. Changing the database MUST NOT
+  require changes to services, API contracts, or the frontend.
+- Every repository implementation MUST pass the same repository contract test suite, on SQLite
+  and on PostgreSQL.
+- Database rules:
   - IDs MUST be ULIDs. Sequential IDs are forbidden.
-  - Writes MUST use `valueInputOption=RAW`, and cell values starting with `=`, `+`, `-`, or `@`
-    MUST be neutralized to prevent formula injection.
-  - All writes MUST be serialized through one write lock. The backend MUST run as a single
-    instance.
-  - Reads MUST be cached with invalidation on write, batched per sheet, and retried with
-    exponential backoff on quota errors (HTTP 429).
-  - The spreadsheet MUST be private, shared only with the service account and one owner. Manual
-    edits to the sheet are forbidden; every change goes through the API so validation and audit
-    apply.
-  - A scheduled backup copy MUST be kept in a private Drive folder.
-- Migration to SQL MUST be planned when any of these is true: more than 5,000 donor rows,
-  repeated quota errors in normal use, or a need for more than one backend instance.
+  - The schema MUST change only through Laravel migrations. Migrations MUST be additive and safe
+    to run on every deploy.
+  - Queries MUST use bound parameters (Eloquent or the query builder). Raw SQL built from input
+    is forbidden.
+  - Uniqueness MUST be enforced by database constraints. Read-modify-write sequences MUST use
+    atomic upserts or transactions, not application-level locks.
+  - Times MUST be stored as UTC timestamps; the connection runs in UTC.
+  - The database MUST NOT be publicly browsable, and credentials live only in `DB_URL`. Manual
+    edits to production data are forbidden; every change goes through the application so
+    validation and audit apply.
+  - Before any personal data is stored, a scheduled backup (`pg_dump` to private storage) MUST
+    exist and a restore MUST have been tested.
 
-Rationale: Sheets makes the pilot free, but it has no transactions, constraints, or concurrency
-control. The repository boundary contains those weaknesses and keeps the exit cheap.
+Rationale: a relational database gives the transactions, constraints, and concurrency control
+that donor data needs. The repository boundary keeps features independent of the database.
 
 ### VI. Emergency Reliability on a Shoestring
 
@@ -200,8 +223,7 @@ audit trail make abuse expensive and detectable without slowing real emergencies
 | --- | --- |
 | Frontend | Next.js (App Router), TypeScript `strict`, Tailwind CSS, shadcn/ui (Radix), RTL-first |
 | Backend | Laravel (PHP 8.3+), versioned REST JSON API under `/api/v1` |
-| MVP store | Google Sheets API via service account, behind repositories |
-| Future store | MySQL or PostgreSQL via Eloquent repositories |
+| Store | PostgreSQL via Eloquent repositories and Laravel migrations (SQLite for local development and tests) |
 | Notifications | Telegram Bot API (MVP) → WhatsApp Cloud API (next) |
 | Hosting | Vercel free tier (frontend); free-tier Laravel host kept awake by external cron |
 | Repository | Monorepo: `frontend/`, `backend/`, `docs/` |
@@ -232,8 +254,8 @@ Architectural invariants:
 - Backend: Pest/PHPUnit feature and unit tests, Laravel Pint (PSR-12), Larastan level 6 or higher.
 - Frontend: ESLint, Prettier, `tsc --noEmit` with no errors. Playwright end-to-end tests cover
   donor registration, request creation, and donor acceptance.
-- Repository contract tests run against an in-memory fake on every CI run and against a sandbox
-  spreadsheet before each release.
+- Repository contract tests run on SQLite in memory and on a disposable PostgreSQL database on
+  every CI run. Tests MUST never connect to a production database.
 - CI (GitHub Actions free tier) MUST pass lint, static analysis, tests, and builds before merge.
 
 ## Governance
@@ -246,4 +268,4 @@ Architectural invariants:
 - Every feature plan, review, and `/speckit-analyze` run checks compliance with this document.
   Exceptions MUST be time-boxed and recorded in the feature's plan.
 
-**Version**: 1.0.1 | **Ratified**: 2026-10-18 | **Last Amended**: 2026-10-19
+**Version**: 1.1.0 | **Ratified**: 2026-10-18 | **Last Amended**: 2026-10-19

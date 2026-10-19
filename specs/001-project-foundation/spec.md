@@ -23,9 +23,15 @@
 
 - Q: Where should operational log entries be kept? → A: Split by importance. Failures, warnings, refused calls, and setting changes go to the data store; routine successful runs go only to host logs.
 - Q: How fresh must the visitor-facing service status be? → A: Backend reachability is checked live on every load; the store-reachability result is reused for up to 60 seconds.
-- Q: How should the store's structure (tabs and header rows) be created in a new environment? → A: With an idempotent operator setup command that creates anything missing, reports what changed, and never deletes or reorders existing columns.
+- Q: How should the store's structure (tabs and header rows) be created in a new environment? → A: With an idempotent operator setup command that creates anything missing, reports what changed, and never deletes or reorders existing columns. _(Superseded on 2026-10-19: see the change below.)_
 - Q: How should the operator see detailed health? → A: Through a detailed health view protected by its own operator secret (separate from the scheduler secret). Callers without it get only the three-state public summary.
 - Q: What accessibility level should the public pages meet? → A: WCAG 2.1 AA, checked automatically on every change plus a manual pass.
+
+### Change 2026-10-19: database store
+
+- 🐘 **Owner decision:** the data store is a **PostgreSQL database** instead of Google Sheets. Local development and automated tests use a lightweight local database. The owner wants a proper relational store with transactions and constraints.
+- 🗂️ **Structure:** tables are created and changed by versioned **schema migrations** that run automatically on every deploy. This replaces the operator setup command (clarification Q3 above).
+- 🔁 **Requirements adjusted** (numbering unchanged): FR-015, FR-018, FR-019, FR-020, FR-022, FR-033, User Story 3, and the related edge cases and assumptions now describe database behavior. Spreadsheet-only mechanics (formula neutralizing, write lock, read cache, rate-limit retries, sandbox spreadsheet, tabs and header rows) no longer apply.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -66,18 +72,18 @@ Every minute, an external timer calls a protected scheduler address. Each call r
 
 ### User Story 3 - Contributors can swap or extend storage safely (Priority: P3)
 
-A contributor adding a feature reads and writes data only through defined storage contracts. Today the data lives in a low-cost spreadsheet store. A later SQL database must be able to replace it with a configuration change, without touching features. One shared contract test suite proves every store behaves the same.
+A contributor adding a feature reads and writes data only through defined storage contracts. The data lives in a relational database: a server database when deployed and a lightweight local database for development and tests. Another database must be able to replace either one with a configuration change, without touching features. One shared contract test suite proves every database behaves the same.
 
-**Why this priority**: this protects the cheap pilot and the future migration. It is not visible to visitors, but skipping it makes every later feature more expensive to move.
+**Why this priority**: this keeps features independent of the database and lets tests run without a server. It is not visible to visitors, but skipping it makes every later feature more expensive to move.
 
-**Independent Test**: run the shared contract suite against the spreadsheet store (sandbox copy) and against the in-memory test store, switching only configuration. Both must pass with identical results.
+**Independent Test**: run the shared contract suite against the local test database and against a disposable copy of the deployed database type, switching only configuration. Both must pass with identical results.
 
 **Acceptance Scenarios**:
 
-1. **Given** the shared contract suite, **When** it runs against each available store, **Then** every test passes on each store.
+1. **Given** the shared contract suite, **When** it runs against each supported database, **Then** every test passes on each one.
 2. **Given** a value that looks like a number or a formula (for example `201012345678` or `=SUM(A1)`), **When** it is saved and read back, **Then** it comes back exactly as entered and is never executed or reformatted.
 3. **Given** two writes arrive at the same moment, **When** both complete, **Then** neither write is lost and the records are not corrupted.
-4. **Given** the store is temporarily rate-limited, **When** a read or write is attempted, **Then** it is retried automatically before reporting failure.
+4. **Given** the store cannot be reached, **When** a read or write is attempted, **Then** a clear "store unavailable" failure is reported quickly, without hanging, and nothing partial is saved.
 
 ---
 
@@ -114,15 +120,16 @@ When a contributor proposes a change to either app, automated checks run: format
 
 ### Edge Cases
 
-- **Store unreachable or over quota:** the status page shows the "limited" state, the scheduler records the failure, and nothing crashes.
+- **Store unreachable, paused, or full:** the status page shows the "limited" state, the scheduler records the failure, and nothing crashes.
 - **Scheduler silent for several minutes** (timer outage or host asleep): the next call catches up on due steps once, without running each missed minute separately.
 - **Scheduler call takes longer than a minute:** the next call does not start a second copy of a step that is still running.
 - **Wrong or missing secret repeated many times:** refused every time, and excessive attempts are rate-limited.
 - **Mixed text direction:** Latin text and digits (phone numbers, codes) inside Arabic sentences render in the correct order.
 - **Very slow mobile connection:** the page shows readable content before any secondary resources finish loading.
-- **Setup command run twice, or on a store that already has data:** nothing is duplicated or lost, and the report says "no changes".
+- **Structure update run twice, or on a store that already has data:** nothing is duplicated or lost, and the second run reports that there is nothing to do.
+- **Deployed before the structure exists:** health reports "not configured" until the structure is in place (FR-033).
 - **Secrets missing in an environment:** the backend refuses to start or reports "not configured" in health, rather than running half-configured.
-- **Test runs:** the contract suite runs only against the sandbox store, never the production store.
+- **Test runs:** the contract suite runs only against disposable test databases, never a deployed one.
 - **Traffic burst** (a shared link opened by hundreds of people at once): the store is still checked at most about once per minute (FR-003), and the store becomes unreachable at most 60 seconds before the status shows "limited".
 
 ## Requirements *(mandatory)*
@@ -159,15 +166,15 @@ When a contributor proposes a change to either app, automated checks run: format
 **💾 Storage**
 
 - **FR-014**: All data reads and writes MUST go through defined storage contracts. Feature logic MUST NOT call a specific store directly.
-- **FR-015**: The active store MUST be chosen by configuration. At least two stores MUST exist: the **spreadsheet store** (pilot) and an **in-memory store** (tests).
-- **FR-016**: A single shared contract test suite MUST run against every store, and every store MUST pass it.
+- **FR-015**: The active database MUST be chosen by configuration. Two MUST be supported: the **deployed database** (a server database) and a **lightweight local database** (local development and automated tests).
+- **FR-016**: A single shared contract test suite MUST run against every supported database, and each MUST pass it.
 - **FR-017**: Records MUST receive random, time-ordered identifiers. Sequential numbers MUST NOT be used.
-- **FR-018**: Values MUST be stored exactly as given. Long digit strings stay text, and values beginning with `=`, `+`, `-`, or `@` MUST be neutralized so they can never run as formulas.
-- **FR-019**: Writes MUST be serialized so concurrent writes are never lost. While the spreadsheet store is active, the backend MUST run as a single instance.
-- **FR-020**: Reads MUST be served from a short-lived cache that is refreshed after every write. Rate-limit responses from the store MUST be retried with increasing delays before an error is reported.
+- **FR-018**: Values MUST be stored and read back exactly as given. Long digit strings stay text, and values beginning with `=`, `+`, `-`, or `@` come back unchanged. Values MUST always be passed to the store as data, never as part of a command, so they can never run as code.
+- **FR-019**: Concurrent writes MUST never be lost or corrupt a record. Uniqueness (for example one row per setting key) MUST be enforced by the store itself, and each insert-or-update MUST be a single atomic operation.
+- **FR-020**: When the store fails or cannot be reached, the failure MUST be reported quickly as a clear "store unavailable" error, without retries that could exceed the scheduler's time limit. The next scheduler call retries naturally.
 - **FR-021**: All stored times MUST be in UTC.
-- **FR-022**: There MUST be separate **sandbox** and **production** stores. Automated tests MUST only ever use the sandbox store.
-- **FR-033**: The store's structure (tabs and header rows for every entity) MUST be created by an idempotent **operator setup command**. It creates only what is missing, reports what it changed, and never deletes, renames, or reorders existing columns. Later features extend the same command. If the backend finds the structure incomplete, its health check MUST report "not configured" instead of failing at random.
+- **FR-022**: Each deployed environment MUST have its own database. Automated tests MUST only ever use **disposable test databases** created for the run, never a deployed database.
+- **FR-033**: The store's structure (a table with columns for every entity) MUST be created and changed only by versioned **schema migrations** that run automatically on every deploy. Running them again MUST change nothing. Later features add new migrations and never edit existing ones. If the backend finds the structure incomplete, its health check MUST report "not configured" instead of failing at random.
 
 **⚙️ Settings**
 
@@ -194,7 +201,7 @@ When a contributor proposes a change to either app, automated checks run: format
 **🚀 Repository, checks, and deployment**
 
 - **FR-027**: The repository MUST hold the public web app, the backend, and project documentation in one place.
-- **FR-028**: Every proposed change MUST run formatting, static analysis, tests (including the storage contract suite on the in-memory store), and builds for both apps. A change with a failing check MUST NOT be mergeable.
+- **FR-028**: Every proposed change MUST run formatting, static analysis, tests (including the storage contract suite on the local test database), and builds for both apps. A change with a failing check MUST NOT be mergeable.
 - **FR-029**: The public site and the backend MUST be deployed and reachable over HTTPS, and the public site MUST be the only origin allowed to call the backend from a browser.
 - **FR-030**: Secrets (store credentials, scheduler secret, operator health secret, bot tokens) MUST live only in each environment's configuration, never in the repository. An example configuration with empty values MUST be committed.
 - **FR-031**: The backend MUST refuse to start, or report "not configured" in its health check, when a required secret is missing.
@@ -217,21 +224,21 @@ When a contributor proposes a change to either app, automated checks run: format
 - **SC-001**: On a mid-range phone over a slow mobile connection (**150 ms latency, 1.6 Mbps download**, phone CPU about 4× slower than a laptop), a visitor sees the status page readable within **5 seconds**.
 - **SC-002**: Over **7 consecutive days**, at least **99%** of the every-minute scheduler calls succeed, and the backend's public status check answers within **3 seconds** at any hour (no cold-start delay).
 - **SC-003**: Running the scheduler twice in a row, or twice at the same moment, leaves **exactly the same** results as running it once, in **100%** of test runs.
-- **SC-004**: The shared contract suite passes **100%** on every store, and switching stores requires **zero** changes outside the storage layer.
+- **SC-004**: The shared contract suite passes **100%** on every supported database, and switching databases requires **zero** changes outside the storage layer.
 - **SC-005**: **100%** of pages show the medical disclaimer and are excluded from search indexing.
 - **SC-006**: **100%** of changes with a failing check are blocked from merging.
 - **SC-007**: Monthly running cost for hosting, storage, and scheduling is **$0**.
 - **SC-008**: An automated secret scan of the repository finds **zero** credentials.
-- **SC-009**: A new contributor can run both apps locally against the in-memory store by following the README in **under 30 minutes**.
+- **SC-009**: A new contributor can run both apps locally against the local database by following the README in **under 30 minutes**.
 - **SC-010**: Automated accessibility checks report **zero** WCAG 2.1 AA violations on every public page.
 
 ## Assumptions
 
 - 📜 **Governing rules:** the [constitution](../../.specify/memory/constitution.md) and [docs/BUSINESS_RULES.md](../../docs/BUSINESS_RULES.md) apply. In particular, Principles IV–VII and rules **DS-01…DS-10** and **SC-01…SC-05**.
-- 💾 **Pilot store:** the spreadsheet store is Google Sheets, reached by a service account. A SQL database replaces it later (constitution V migration rule).
+- 💾 **Store:** the deployed database is **PostgreSQL**, reached through one secret connection URL; the local database is SQLite (owner decision, 2026-10-19; constitution V). The PostgreSQL host is still to be chosen: free options have expiry, pause, or usage limits, and a paid host would affect SC-007.
 - ☁️ **Hosting:** the public site is on Vercel's free tier and the backend on Render's free tier (decision D11). The every-minute timer uses a free external cron service. Free-tier terms are re-checked before launch.
 - 🌍 **Language:** Arabic is the only language shipped in this feature. English arrives in a later feature through the same translation resources.
 - 🔐 **Operator path for settings:** the operator changes settings through a protected command until the admin dashboard exists (admin feature).
 - 📣 **Alerts:** step failures and refused calls are recorded in this feature. Sending them to the admin Telegram group comes with the notification features.
-- 🧪 **Environments:** the deployed environment uses the **sandbox** store until pilot launch; the production store is created now but stays unused.
+- 🧪 **Environments:** each deployed environment has its own database; tests use only disposable databases. Until pilot launch the deployed database holds no personal data.
 - 🚫 **Out of scope:** donors, requests, matching, notifications, admin login, locations, and every other business feature.

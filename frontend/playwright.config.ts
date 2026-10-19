@@ -1,14 +1,20 @@
+import { join } from "node:path";
 import { defineConfig, devices } from "@playwright/test";
 
 const API_URL = "http://localhost:8000";
 const WEB_URL = "http://localhost:3000";
 const isCI = Boolean(process.env.CI);
+// A throwaway SQLite file, rebuilt by migrate:fresh on every run (git-ignored).
+const E2E_DATABASE = join(__dirname, "../backend/database/e2e.sqlite");
 
 // Test-only values. Never real secrets (constitution VII).
 const BACKEND_ENV = {
   APP_ENV: "local",
   APP_KEY: "base64:ZTJlLW9ubHktYXBwLWtleS1ub3QtYS1zZWNyZXQhIQ==",
-  DATA_DRIVER: "memory",
+  DB_CONNECTION: "sqlite",
+  DB_DATABASE: E2E_DATABASE,
+  // Blank, so a PostgreSQL URL in backend/.env can never reach migrate:fresh below.
+  DB_URL: "",
   CACHE_STORE: "file",
   SESSION_DRIVER: "array",
   LOG_CHANNEL: "stderr",
@@ -36,8 +42,9 @@ export default defineConfig({
   ],
   webServer: [
     {
-      // Backend on the in-memory store, with its tabs created first.
-      command: "php artisan store:setup && php artisan serve --port=8000",
+      // Backend on a fresh, migrated SQLite database.
+      command:
+        "php -r \"touch('database/e2e.sqlite');\" && php artisan migrate:fresh --force && php artisan serve --port=8000",
       cwd: "../backend",
       url: `${API_URL}/up`,
       env: BACKEND_ENV,

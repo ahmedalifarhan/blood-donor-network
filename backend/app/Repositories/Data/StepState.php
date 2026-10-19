@@ -3,7 +3,7 @@
 namespace App\Repositories\Data;
 
 /**
- * One row of the SchedulerSteps tab (data-model.md §2).
+ * One row of the scheduler_steps table (data-model.md §2).
  */
 final readonly class StepState
 {

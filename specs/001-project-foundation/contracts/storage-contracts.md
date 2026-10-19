@@ -2,7 +2,7 @@
 
 **Feature**: 001-project-foundation · **Data model**: [data-model.md](../data-model.md)
 
-Every store implementation (**Sheets**, **InMemory**, later **Eloquent**) implements these interfaces in `backend/app/Repositories/Contracts/` and must pass the **same** contract suite in `backend/tests/Contract/` (FR-014–FR-016, SC-004). Feature code depends on interfaces only. The driver is bound from `DATA_DRIVER` in a service provider.
+The store implementation (**Eloquent**, in `backend/app/Repositories/Eloquent/`) implements these interfaces in `backend/app/Repositories/Contracts/` and must pass the **same** contract suite in `backend/tests/Contract/` on every supported database: **SQLite** and **PostgreSQL** (FR-014–FR-016, SC-004). Feature code depends on interfaces only. `StorageServiceProvider` binds the contracts; the database is chosen by Laravel's `DB_CONNECTION` (`pgsql` deployed, `sqlite` local and tests).
 
 ---
 
@@ -13,17 +13,17 @@ Every store implementation (**Sheets**, **InMemory**, later **Eloquent**) implem
 | Method | Returns | Behavior |
 | --- | --- | --- |
 | `allOverrides()` | `array<string, string>` | Key → raw value. Empty when none |
-| `upsert(string $key, string $value, string $by)` | `void` | Insert or replace the row for `$key` under the write lock. Sets `UpdatedAt` and `UpdatedBy` |
+| `upsert(string $key, string $value, string $by)` | `void` | Insert or replace the row for `$key` in one atomic `INSERT … ON CONFLICT (key)`; an existing row keeps its `id`. Sets `updated_at` and `updated_by` |
 
-> Typed reads, defaults, and validation live in `SettingsService` (not in the repository), so every driver behaves the same.
+> Typed reads, defaults, and validation live in `SettingsService` (not in the repository), so every database behaves the same.
 
 ### `SchedulerStateRepository`
 
 | Method | Returns | Behavior |
 | --- | --- | --- |
 | `find(string $step)` | `?StepState` | `null` when no row |
-| `all()` | `list<StepState>` | Ordered by `StepName` |
-| `save(StepState $state)` | `void` | Insert or update by `StepName` (unique) under the write lock |
+| `all()` | `list<StepState>` | Ordered by `step_name` |
+| `save(StepState $state)` | `void` | Insert or update by `step_name` (unique constraint) in one atomic `INSERT … ON CONFLICT (step_name)` |
 
 ### `OperationalLogRepository`
 
@@ -32,56 +32,55 @@ Every store implementation (**Sheets**, **InMemory**, later **Eloquent**) implem
 | `append(LogEntry $entry)` | `string` (ULID) | Append-only. Masks context and IP before storing |
 | `recent(int $limit = 50)` | `list<LogEntry>` | Newest first. Used by tests and the future admin view |
 
-> ❌ No `update` or `delete` methods: append-only by construction.
+> ❌ No `update` or `delete` methods: append-only by construction. The `OperationalLog` Eloquent model also **throws** on update or delete.
 
 ### `StoreProbe`
 
 | Method | Returns | Behavior |
 | --- | --- | --- |
-| `check()` | `ProbeResult{reachable: bool, structureComplete: bool, missing: list<string>}` | One cheap call (spreadsheet metadata). Never throws; failures map to `reachable=false` |
+| `check()` | `ProbeResult{reachable: bool, structureComplete: bool, missing: list<string>}` | Lists each table's columns and compares them with `config/store-schema.php`. `missing` holds `table` or `table.column` names (e.g. `scheduler_steps.last_period`). No retries; never throws; failures map to `reachable=false`. Cached 60 s by the caller |
 
-### `StoreSchemaManager` (used by `store:setup` only)
+> 🗂️ **Schema**: there is no schema-manager contract. Tables are created only by **Laravel migrations**, run automatically at container start (FR-033). The former `StoreSchemaManager` and `store:setup` were removed on 2026-10-19.
 
-| Method | Returns | Behavior |
+### 🧱 How the implementation is built
+
+| Part | Location | Role |
 | --- | --- | --- |
-| `plan()` | `list<SchemaChange>` | What would be created (tab or header). No writes |
-| `apply()` | `list<SchemaChange>` | Creates missing tabs and appends missing headers. Never deletes, renames, or reorders. Idempotent |
-| `title()` | `string` | Store title, used by `store:setup`'s sandbox guard |
+| **Repositories** | `app/Repositories/Eloquent/` | `EloquentSettingsRepository`, `EloquentSchedulerStateRepository`, `EloquentOperationalLogRepository`, `DatabaseStoreProbe` |
+| **Models** | `app/Models/` | `Setting`, `SchedulerStep`, `OperationalLog`; used **only** inside repositories |
+| **Error mapping** | trait `GuardsStoreAccess` | `QueryException` / `PDOException` → `StoreUnavailable`, no retries |
+| **Binding** | `StorageServiceProvider` | Binds each contract to its Eloquent implementation |
 
-### 🧱 How the drivers are built
-
-Both current drivers are **table-shaped**, so they share one implementation of every contract above (`app/Repositories/Table/`). That layer does header mapping, `CellCodec`, caching, the write lock, and backoff. They differ only in a small `CellBackend` (raw cells in, raw cells out): `SheetsCellBackend` and `InMemoryCellBackend`. A future SQL driver implements the contracts directly with Eloquent and must still pass this suite.
+- **Values** are bound parameters, so nothing is escaped or evaluated.
+- **Times** are stored as UTC timestamps and returned as ISO 8601 `Z` strings.
 
 ---
 
-## ✅ Shared contract suite (runs per driver)
+## ✅ Shared contract suite (runs on SQLite and PostgreSQL)
 
-| # | Case | Expectation |
+| # | Case | Expectation | Status |
+| --- | --- | --- | --- |
+| C1 | Round-trip values: `201012345678`, `=SUM(A1)`, `+201012345678`, `-5`, `@user`, `'quoted`, `''double`, `""`, `عرب مطير`, `🩸`, a 5,000-char string | Read back **byte-identical** | ✅ `SettingsRepositoryTest` |
+| C2 | `SettingsRepository::upsert` twice on one key | One row, latest value, same `id` | ✅ `SettingsRepositoryTest` |
+| C3 | `SchedulerStateRepository::save` for a new step, then an update | One row per `step_name` | ✅ `SchedulerStateRepositoryTest` |
+| C4 | 20 concurrent `upsert`s on different keys (process pool) | 20 rows, none lost or corrupted | 🐘 PostgreSQL CI run only (SQLite in memory has no real concurrency) |
+| C5 | 20 concurrent `append`s | 20 entries, 20 unique ULIDs, all readable | 🟡 Sequential on SQLite in `OperationalLogRepositoryTest`; truly concurrent only in the PostgreSQL CI run (T054) |
+| C6 | ULIDs | 26 chars, monotonic order by creation time | ✅ `OperationalLogRepositoryTest` |
+| C7 | `OperationalLogRepository::append` with a phone in context | Stored masked (`2010****5678`) | ✅ `OperationalLogRepositoryTest` |
+| C8 | Timestamps written then read | UTC `Z` strings, unchanged | ✅ `SchedulerStateRepositoryTest`, `OperationalLogRepositoryTest` |
+| C9 | ~~Header order shuffled in the tab~~ | ⛔ **Retired (2026-10-19)**: Sheets-only. Columns are addressed by name in SQL, so order never matters | — |
+| C10 | Extra column added by a **later migration** | Ignored by code that doesn't know it; the repository still reads and writes its own columns | ⏳ To write |
+| C11 | `php artisan migrate` twice | Second run reports **"Nothing to migrate"**; no data changed | ⏳ To write |
+| C12 | Database unreachable (bad host or refused connection) | `StoreUnavailable` raised **quickly, with no retries**; the probe reports `reachable=false` | ⏳ To write (the probe half is covered by `DatabaseStoreProbeTest`) |
+| C13 | Store keeps failing | Typed `StoreUnavailable` raised; no partial row | ✅ `OperationalLogRepositoryTest` |
+
+> 📝 **IDs are stable.** C9 is retired, and C10–C12 were redefined for PostgreSQL on 2026-10-19 (formerly: unknown spreadsheet column, `StoreSchemaManager::apply` twice, 429 backoff). They are not renumbered.
+
+### ▶️ Running the suite
+
+| Database | How | When |
 | --- | --- | --- |
-| C1 | Round-trip values: `201012345678`, `=SUM(A1)`, `+201012345678`, `-5`, `@user`, `'quoted`, `''double`, `""`, `عرب مطير`, `🩸`, a 5,000-char string | Read back **byte-identical** |
-| C2 | `SettingsRepository::upsert` twice on one key | One row, latest value |
-| C3 | `SchedulerStateRepository::save` for a new step, then an update | One row per `StepName` |
-| C4 | 20 concurrent `upsert`s on different keys (process pool) | 20 rows, none lost or corrupted |
-| C5 | 20 concurrent `append`s | 20 entries, 20 unique ULIDs, all readable |
-| C6 | ULIDs | 26 chars, monotonic order by creation time |
-| C7 | `OperationalLogRepository::append` with a phone in context | Stored masked (`2010****5678`) |
-| C8 | Timestamps written then read | UTC `Z` strings, unchanged |
-| C9 | Header order shuffled in the tab (simulated manual reorder) | Mapper still reads by header name |
-| C10 | Extra unknown column present | Ignored, preserved on update |
-| C11 | `StoreSchemaManager::apply` twice | Second run returns no changes |
-| C12 | Store returns 429 twice, then OK (fake transport for Sheets; injected fault for memory) | Operation succeeds within the 8 s budget |
-| C13 | Store keeps failing | Typed `StoreUnavailable` raised; no partial row |
+| **SQLite in memory** | `cd backend && ./vendor/bin/pest tests/Contract` (default from `phpunit.xml`) | Locally and in every CI run |
+| **PostgreSQL** | Same command with `DB_CONNECTION=pgsql` and `DB_URL` pointing at a **disposable** Postgres service container | Planned CI job (US5) |
 
-Run with:
-
-```bash
-cd backend && ./vendor/bin/pest tests/Contract
-```
-
-and against the sandbox spreadsheet only:
-
-```bash
-cd backend && ./vendor/bin/pest tests/Contract --group=sheets
-```
-
-The `sheets` group aborts unless the spreadsheet title ends with `[sandbox]` (research R14).
+- 🧪 Tests **never** use a deployed database; no deployed `DB_URL` is available to test jobs (FR-022, research R14).

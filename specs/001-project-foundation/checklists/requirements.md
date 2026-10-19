@@ -33,8 +33,8 @@
 
 | ✅ Result | Detail |
 | --- | --- |
-| **Iterations** | 1. All items passed on the first validation |
+| **Iterations** | 2. All items passed on the first validation, and again on **re-validation (2026-10-19)** after the store moved from Google Sheets to PostgreSQL |
 | **Clarification markers** | 0. Every open point had a documented default (see Assumptions) |
-| **Tech names** | Vercel, Render, and Google Sheets appear only in the quoted **Input** and in **Assumptions** (as decided dependencies D11 and constitution V). Requirements say "spreadsheet store", "free timer", and so on |
-| **Audience caveat** | This is an infrastructure feature, so some requirements (HTTPS, static analysis, serialized writes) are unavoidably technical. They are phrased as observable outcomes, not as how to build them |
+| **Tech names** | Vercel, Render, and PostgreSQL appear only in **Assumptions** and the dated **Clarifications** change note (decided dependencies D11 and constitution V); Google Sheets survives only in the original quoted **Input** and that change note. Requirements say "the deployed database", "local database", "free timer", and so on |
+| **Audience caveat** | This is an infrastructure feature, so some requirements (HTTPS, static analysis, atomic writes, schema migrations) are unavoidably technical. They are phrased as observable outcomes, not as how to build them |
 | **Scope boundary** | Assumptions → "Out of scope" lists every business feature, so planning can't drift into donors or requests |

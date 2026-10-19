@@ -18,7 +18,7 @@ interface SchedulerStateRepository
     public function all(): array;
 
     /**
-     * Insert or update by unique step name, under the write lock.
+     * Insert or update by unique step name, atomically (one row per step).
      *
      * @throws StoreUnavailable
      */

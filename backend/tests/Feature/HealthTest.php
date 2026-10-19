@@ -1,22 +1,18 @@
 <?php
 
 use App\Repositories\Contracts\StoreProbe;
-use App\Repositories\Contracts\StoreSchemaManager;
 use App\Repositories\Data\ProbeResult;
-use App\Repositories\Table\CellBackend;
+use App\Repositories\Eloquent\DatabaseStoreProbe;
+use Illuminate\Database\DatabaseManager;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Schema;
 
 // US1: FR-003, FR-004, FR-006, FR-031, FR-033; spec clarification Q2 (60 s probe cache).
+// RefreshDatabase runs the migrations, so every test starts with a ready store.
 
-beforeEach(fn () => withoutBackoffDelays());
-
-function setUpStore(): void
-{
-    app(StoreSchemaManager::class)->apply();
-}
+uses(RefreshDatabase::class);
 
 it('reports running when config is complete and the store is ready', function () {
-    setUpStore();
-
     $this->getJson('/api/v1/health')
         ->assertOk()
         ->assertJsonPath('status', 'running')
@@ -24,7 +20,6 @@ it('reports running when config is complete and the store is ready', function ()
 });
 
 it('returns exactly status and checkedAt, nothing else', function () {
-    setUpStore();
 
     $json = $this->getJson('/api/v1/health')->json();
 
@@ -33,25 +28,27 @@ it('returns exactly status and checkedAt, nothing else', function () {
 });
 
 it('reports limited when the store is unreachable', function () {
-    setUpStore();
-    app(CellBackend::class)->failNext(10, 503);
+    $db = Mockery::mock(DatabaseManager::class);
+    $db->shouldReceive('connection')->andThrow(new PDOException('connection refused'));
+    app()->instance(StoreProbe::class, new DatabaseStoreProbe($db, config('store-schema')));
 
     $this->getJson('/api/v1/health')->assertOk()->assertJsonPath('status', 'limited');
 });
 
 it('reports limited when the store structure is incomplete', function () {
+    // As if the latest migration had not run yet.
+    Schema::drop('operational_logs');
+
     $this->getJson('/api/v1/health')->assertOk()->assertJsonPath('status', 'limited');
 });
 
 it('reports limited when required configuration is missing', function () {
-    setUpStore();
     config(['scheduler.secret' => null]);
 
     $this->getJson('/api/v1/health')->assertOk()->assertJsonPath('status', 'limited');
 });
 
 it('never reveals which configuration is missing', function () {
-    setUpStore();
     config(['scheduler.secret' => null]);
 
     $body = $this->getJson('/api/v1/health')->getContent();
@@ -61,13 +58,11 @@ it('never reveals which configuration is missing', function () {
 });
 
 it('tells search engines not to index it', function () {
-    setUpStore();
 
     $this->getJson('/api/v1/health')->assertHeader('X-Robots-Tag', 'noindex');
 });
 
 it('allows only the frontend origin through CORS', function () {
-    setUpStore();
 
     $this->getJson('/api/v1/health', ['Origin' => 'http://localhost:3000'])
         ->assertHeader('Access-Control-Allow-Origin', 'http://localhost:3000');
@@ -81,7 +76,6 @@ it('allows only the frontend origin through CORS', function () {
 });
 
 it('checks the store at most once per 60 seconds', function () {
-    setUpStore();
 
     $real = app(StoreProbe::class);
     $counting = new class($real) implements StoreProbe
@@ -112,7 +106,6 @@ it('checks the store at most once per 60 seconds', function () {
 });
 
 it('rate-limits each IP to 60 requests per minute', function () {
-    setUpStore();
 
     for ($i = 0; $i < 60; $i++) {
         $this->getJson('/api/v1/health')->assertOk();

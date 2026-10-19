@@ -2,10 +2,12 @@
 # Production-tuned PHP-FPM + Nginx, running as the unprivileged www-data user.
 FROM serversideup/php:8.3-fpm-nginx
 
-# The image's Laravel automations cache config/routes/views at container start
-# (after Render injects the env vars). There is no database: never migrate.
+# The image's Laravel automations cache config/routes/views and run
+# `php artisan migrate --force` at container start, after Render injects the
+# env vars (including DB_URL). Render free instances have no shell, so this is
+# how the PostgreSQL schema stays current. pdo_pgsql ships with the image.
 ENV AUTORUN_ENABLED=true \
-    AUTORUN_LARAVEL_MIGRATION=false \
+    AUTORUN_LARAVEL_MIGRATION=true \
     AUTORUN_LARAVEL_STORAGE_LINK=false \
     PHP_OPCACHE_ENABLE=1 \
     LOG_CHANNEL=stderr

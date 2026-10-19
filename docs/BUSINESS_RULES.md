@@ -2,7 +2,7 @@
 
 Every business rule, grouped by service.
 
-- **Status:** approved baseline, aligned with [constitution](../.specify/memory/constitution.md) v1.0.1 (2026-10-19)
+- **Status:** approved baseline, aligned with [constitution](../.specify/memory/constitution.md) v1.1.0 (2026-10-19)
 - **Precedence:** constitution → this file → [README.md](../README.md). If two conflict, the earlier one wins and the later one gets fixed
 - **Data model and API:** README §9 and §11
 - **Changing a rule:** edit it here first, then the specs that use it. A rule that contradicts the constitution needs a constitution amendment (`/speckit-constitution`)
@@ -31,7 +31,7 @@ Every business rule, grouped by service.
 | 16 | [📊 Public Statistics](#16--public-statistics) | `PS-xx` |
 | 17 | [🧾 Audit](#17--audit) | `AU-xx` |
 | 18 | [🔒 Privacy & Data Protection](#18--privacy--data-protection) | `PR-xx` |
-| 19 | [💾 Data Storage (Google Sheets MVP)](#19--data-storage-google-sheets-mvp) | `DS-xx` |
+| 19 | [💾 Data Storage (PostgreSQL)](#19--data-storage-postgresql) | `DS-xx` |
 | 20 | [⏰ Scheduler](#20--scheduler) | `SC-xx` |
 
 ---
@@ -60,6 +60,12 @@ Every business rule, grouped by service.
 | D11 (O4) | Which free backend host? | **Render free tier**, kept awake by the every-minute tick | SC-05 |
 | D12 (O5) | Who are the pilot admins? | **The owner (SuperAdmin) + 1–2 trusted villagers**, each with their own account | AD-11 |
 | D13 (O6) | English spelling of عرب مطير? | **Arab Mutair** | LC-05 |
+
+### ✅ Decided (2026-10-19), storage
+
+| # | Question | Decision | Rules |
+| --- | --- | --- | --- |
+| D14 | Where is the data stored? | **PostgreSQL** (was Google Sheets), by owner decision. SQLite for local development and automated tests. The host is the operator's choice (DS-10) | DS-01…DS-10, DUP-06, AD-09, PS-04 |
 
 > ✅ **No open decisions remain.** New questions get added here as `Ox` until they're decided.
 
@@ -106,7 +112,7 @@ Every business rule, grouped by service.
 | DUP-03 | The duplicate check runs **after** normalization (PH-01…PH-05) | |
 | DUP-04 | On a duplicate, never say "phone already exists". Say: "This number may already be registered. Use your manage link or contact the admin" | Otherwise anyone can test whether a number is in a blood database |
 | DUP-05 | Inactive (soft-deleted) donors still count as duplicates. The admin reactivates them instead of creating a new record | Keeps history; avoids two records for one person |
-| DUP-06 | The duplicate check and the insert run inside the same write lock | Google Sheets has no unique constraint, so two fast submissions would both pass |
+| DUP-06 | A **unique constraint on the normalized phone**, with the duplicate check and the insert in **one transaction** | PostgreSQL enforces it, so two fast submissions can never both create a donor |
 | DUP-07 | Admin "Possible duplicates" view: very similar names in the same locality (different phones) | Catches people who registered twice with two numbers |
 
 ## 4. 📲 Phone Verification
@@ -260,7 +266,7 @@ Every business rule, grouped by service.
 | AD-06 | KPIs (last 30 days): median time to first accept, median time to fulfil, fulfil / cancel / expire rates, accept rate per wave | |
 | AD-07 | Admin actions: verify, reject, edit, deactivate, reactivate, erase, re-issue manage or Telegram link, relay sent, request status changes, reopen, settings | |
 | AD-08 | Admins cannot hard-delete anything | |
-| AD-09 | **No one edits the Google Sheet by hand.** All changes go through the dashboard | Manual edits skip validation, duplicate checks, and the audit log |
+| AD-09 | **No one edits the production database by hand** (no ad-hoc SQL). All changes go through the dashboard / app | Manual edits skip validation, duplicate checks, and the audit log |
 | AD-10 | Admin lists show phones masked; the full number appears only on the donor detail page and in the relay action | Less exposure on shared screens |
 | AD-11 | **Pilot admins:** the owner as SuperAdmin plus 1–2 trusted villagers (SuperAdmin during the pilot). Each person has their own account, so there are no shared logins, and all are in the admin Telegram alert group. Names are kept out of the docs | Decision D12. Someone can cover nights and the relay queue; separate accounts keep the audit log meaningful |
 
@@ -283,7 +289,7 @@ Every business rule, grouped by service.
 | PS-01 | Public counts per blood type of usable donors in the chosen area subtree | Replaces open donor search (D5) |
 | PS-02 | A count below `PublicCountThreshold` (default 3) is shown as **"fewer than 3"** | Prevents identifying people in small villages |
 | PS-03 | No names, IDs, or per-donor data in any public response | |
-| PS-04 | Counts cached for 5 minutes | Protects Sheets quotas |
+| PS-04 | Counts cached for 5 minutes | Reduces database load and keeps public counts stable |
 
 ## 17. 🧾 Audit
 
@@ -307,20 +313,32 @@ Every business rule, grouped by service.
 | PR-06 | Medical disclaimer on request creation, the requester manage page, share pages, response pages, and in every notification | Constitution I |
 | PR-07 | Manage, response, and Telegram link tokens are random, stored only as hashes, and revocable | |
 
-## 19. 💾 Data Storage (Google Sheets MVP)
+## 19. 💾 Data Storage (PostgreSQL)
+
+- **Deployed:** PostgreSQL, selected with `DB_CONNECTION=pgsql`
+- **Local development:** SQLite (`database/database.sqlite`, created by `php artisan migrate`)
+- **Automated tests:** SQLite in memory; the Playwright e2e backend uses a throwaway SQLite file
 
 | ID | Rule | Why |
 | --- | --- | --- |
-| DS-01 | All IDs are ULIDs (random, time-sortable) | Sheets can't auto-increment safely; sequential IDs are guessable |
-| DS-02 | Write with `valueInputOption=RAW` | Otherwise Sheets turns `201012345678` into a number or scientific notation |
-| DS-03 | Values starting with `=`, `+`, `-`, or `@` are neutralized before writing | Stops formula injection (e.g. a name like `=HYPERLINK(...)`) |
-| DS-04 | Read each sheet in one batch, cache briefly, filter in PHP, and clear the cache on write | Stays inside Sheets API quotas |
-| DS-05 | All writes go through one write lock; the backend runs as **one instance** | Same reason as DUP-06 |
-| DS-06 | Retry with exponential backoff on quota errors (HTTP 429) | |
-| DS-07 | Times stored in UTC (ISO 8601) and displayed in the location's timezone | Egypt uses daylight saving time again |
-| DS-08 | Weekly backup: copy the spreadsheet to a private Drive folder. ⏳ **Deferred obligation:** feature `001-project-foundation` deferred this because it stores no personal data. A `weekly-backup` scheduler step **MUST ship before or with the first feature that stores personal data** (donor registration), and that feature's plan must include it | Constitution V; time-boxed exception recorded in `specs/001-project-foundation/plan.md` |
-| DS-09 | Repository interfaces, so MySQL/PostgreSQL replaces Sheets without changing business logic | Constitution V |
-| DS-10 | Plan the move to SQL at > 5,000 donors, repeated quota errors, or a need for more than one backend instance | Constitution V |
+| DS-01 | All IDs are **ULIDs** (26 characters, random, time-sortable) | Sequential IDs are guessable; ULIDs work the same on PostgreSQL and SQLite |
+| DS-02 | Every query uses **bound parameters** (Eloquent or the query builder). SQL is never built from input | Stops SQL injection. Values are stored as data, never evaluated, so no formula neutralizing is needed |
+| DS-03 | **The database enforces integrity**: unique constraints (e.g. `settings.key`, `scheduler_steps.step_name`, donor phone), atomic upserts (`INSERT … ON CONFLICT`), and transactions. No global write lock | Correct under concurrent requests and with more than one backend instance (the pilot still runs one; with `CACHE_STORE=file`, rate limits and the probe cache are per instance) |
+| DS-04 | The schema changes **only through Laravel migrations** (`backend/database/migrations/`, snake_case columns). Filtering happens in indexed queries, not in PHP | One reviewed schema history, identical on PostgreSQL and SQLite; queries stay fast as data grows |
+| DS-05 | Migrations **run automatically at container start** on Render (`AUTORUN_LARAVEL_MIGRATION=true`) and must be additive and safe to rerun | Free Render instances have no shell to run `php artisan migrate` |
+| DS-06 | Database errors surface as **`StoreUnavailable`** and are reported, never swallowed. The public `/api/v1/health` contract is unchanged | No silent failures (constitution VI) |
+| DS-07 | Times stored in UTC (`timestamptz`), returned as ISO 8601 strings ending in `Z`, and displayed in the location's timezone | Egypt uses daylight saving time again |
+| DS-08 | Backups: a scheduled **`pg_dump` to private storage** (e.g. a GitHub Actions job), with a tested restore. ⏳ **Deferred obligation:** feature `001-project-foundation` deferred this because it stores no personal data. The backup **MUST ship before or with the first feature that stores personal data** (donor registration), and that feature's plan must include it | Constitution V. Free database tiers often have no usable backups; time-boxed exception recorded in `specs/001-project-foundation/plan.md` |
+| DS-09 | Features depend only on **repository interfaces**. The Eloquent implementations live in `backend/app/Repositories/Eloquent/` | The PostgreSQL host can be swapped, and SQLite used in tests, without changing business logic (constitution V) |
+| DS-10 | The connection comes from one secret, **`DB_URL`**, entered in the Render dashboard. `render.yaml` declares no database, so any PostgreSQL host works. **Render's free PostgreSQL is never used for real data** | Keeps the host replaceable. Render's free database expires after 30 days and is deleted after a further 14-day grace period |
+
+### 🐘 Host options (operator's decision, not yet chosen)
+
+| Host | Cost | Caveat |
+| --- | --- | --- |
+| Render paid Basic | ~US$6–7 / month | Same provider as the backend |
+| Supabase free | Free | 500 MB; pauses after 7 days without activity, which the every-minute tick prevents |
+| Neon free | Free | 0.5 GB, 100 compute-hours / month; the every-minute tick keeps compute awake, so the hours may run out |
 
 ## 20. ⏰ Scheduler
 
@@ -350,3 +368,6 @@ Every business rule, grouped by service.
 - **Name and stack:** BloodLink → Blood Donor Network; Vue → Next.js (README).
 - **Blood types per request (2026-10-19):** the earlier draft allowed several types per request; it is now **one type per request** (D9).
 - **Pilot spelling (2026-10-19):** "Arab Matir" / "Arab Muteer" → **Arab Mutair** (D13).
+- **Storage (2026-10-19):** Google Sheets → **PostgreSQL** by owner decision (D14). Section 19 rewritten; DUP-06, AD-09, and PS-04 updated.
+  - Removed: RAW writes, formula neutralizing, the global write lock, the read cache, 429 backoff, the Drive backup, and the "move to SQL" triggers.
+  - Now: bound parameters, database constraints and transactions, migrations only, and a `pg_dump` backup.

@@ -26,7 +26,6 @@
         <env name="BCRYPT_ROUNDS" value="4"/>
         <env name="BROADCAST_CONNECTION" value="null"/>
         <env name="CACHE_STORE" value="array"/>
-        <env name="DATA_DRIVER" value="memory"/>
         <env name="SCHEDULER_SECRET" value="test-scheduler-secret"/>
         <env name="OPERATOR_HEALTH_SECRET" value="test-operator-secret"/>
         <env name="FRONTEND_URL" value="http://localhost:3000"/>

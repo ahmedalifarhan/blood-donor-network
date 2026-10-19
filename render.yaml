@@ -20,8 +20,8 @@ services:
         value: production
       - key: APP_DEBUG
         value: "false"
-      - key: DATA_DRIVER
-        value: sheets
+      - key: DB_CONNECTION
+        value: pgsql
       - key: CACHE_STORE
         value: file
       - key: SESSION_DRIVER
@@ -39,9 +39,11 @@ services:
       # Entered by the operator in the dashboard (never committed).
       - key: APP_KEY
         sync: false
-      - key: GOOGLE_SHEET_ID
-        sync: false
-      - key: GOOGLE_SERVICE_ACCOUNT_JSON
+      # PostgreSQL connection URL from any host (Render, Supabase, Neon, …):
+      # postgresql://user:password@host:5432/dbname?sslmode=require
+      # No database is declared here on purpose: Render's free database is
+      # deleted 44 days after creation.
+      - key: DB_URL
         sync: false
       - key: FRONTEND_URL
         sync: false

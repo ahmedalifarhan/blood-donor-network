@@ -18,7 +18,7 @@ interface SettingsRepository
     public function allOverrides(): array;
 
     /**
-     * Insert or replace the row for $key under the write lock.
+     * Insert or replace the row for $key, atomically (one row per key).
      *
      * @throws StoreUnavailable
      */

@@ -4,8 +4,8 @@ namespace App\Services;
 
 /**
  * Names (never values) of required environment variables that are missing
- * for the active driver (FR-031). Reads config, not env(), so it keeps
- * working after `php artisan config:cache`.
+ * for the active database connection (FR-031). Reads config, not env(),
+ * so it keeps working after `php artisan config:cache`.
  */
 final class ConfigCheck
 {
@@ -14,8 +14,8 @@ final class ConfigCheck
     {
         $required = self::map(config('store.required.always'));
 
-        if (config('store.driver') === 'sheets') {
-            $required = [...$required, ...self::map(config('store.required.sheets'))];
+        if (config('database.default') === 'pgsql') {
+            $required = [...$required, ...self::map(config('store.required.pgsql'))];
         }
 
         $missing = [];
@@ -29,19 +29,6 @@ final class ConfigCheck
         }
 
         return $missing;
-    }
-
-    /**
-     * Only the variables the store itself needs: what `store:setup` and the
-     * other operator commands require when run outside the web host.
-     *
-     * @return list<string>
-     */
-    public function missingForStore(): array
-    {
-        $storeOnly = config('store.driver') === 'sheets' ? self::map(config('store.required.sheets')) : [];
-
-        return array_values(array_intersect($this->missing(), array_keys($storeOnly)));
     }
 
     public function isComplete(): bool

@@ -13,6 +13,9 @@ phpunit.xml
 phpstan.neon
 pint.json
 
+# Local databases (SQLite dev and e2e files).
+database/*.sqlite*
+
 storage/logs/*
 storage/framework/cache/*
 storage/framework/sessions/*

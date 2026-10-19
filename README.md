@@ -80,7 +80,7 @@ Not a directory of `Name / Phone / Blood Type`, but a **community blood donor ne
 | Hard-coded Egyptian phone rules | Per-country config (dial code, mobile prefixes, timezone) |
 | Hard-coded pilot location | The pilot is rows in `Locations` plus seed data |
 
-The system must be **location-agnostic, storage-agnostic, privacy-first, API-based, Arabic-first, and mobile-first**, even while it runs on Google Sheets.
+The system must be **location-agnostic, storage-agnostic, privacy-first, API-based, Arabic-first, and mobile-first**. Features depend only on repository interfaces, never on **PostgreSQL** directly.
 
 ## 4. 👥 Users & Roles
 
@@ -141,7 +141,7 @@ Step 1: Full name + phone
       ↓
 Phone normalized (Arabic digits, country rules) → 201012345678
       ↓
-Duplicate check under write lock → generic message if already registered
+Duplicate check + insert in one transaction (unique phone) → generic message if already registered
       ↓
 Step 2: Blood type (8 buttons or "I don't know")
       ↓
@@ -224,7 +224,7 @@ This is a summary. Every numbered rule is in [docs/BUSINESS_RULES.md](docs/BUSIN
 - **HTTPS only**
 - **Backend validation** on every input
 - **Rate limiting** on registration, verification, request creation, accept actions, and admin login
-- **Storage-agnostic**: switching Google Sheets → MySQL/PostgreSQL changes no business logic, API, or frontend
+- **Storage-agnostic**: features use repository interfaces only, so changing the PostgreSQL host (or running on SQLite locally and in tests) changes no business logic, API, or frontend
 - **Location-agnostic**: a new country or village needs data and config only
 - **No silent failures**: failed notifications and scheduler errors are shown to admins
 
@@ -250,7 +250,14 @@ This is a summary. Every numbered rule is in [docs/BUSINESS_RULES.md](docs/BUSIN
 
 ## 9. 💾 Data Model
 
-Designed as if for SQL, even while stored in Google Sheets (one sheet per table, row 1 = headers). All IDs are **ULIDs**. All times are **UTC ISO 8601**.
+| Aspect | Rule |
+| --- | --- |
+| **Store** | **PostgreSQL** when deployed; **SQLite** for local development (`database/database.sqlite`) and automated tests |
+| **Schema** | Created only by Laravel migrations in `backend/database/migrations/`, with **snake_case** columns (the PascalCase names below are logical names) |
+| **Built so far** | `settings`, `scheduler_steps`, `operational_logs`. The tables below arrive with the features that need them |
+| **IDs** | **ULIDs** (26 characters) |
+| **Times** | Stored as UTC `timestamptz`; the API returns ISO 8601 strings ending in `Z` |
+| **Uniqueness** | Enforced by database constraints (e.g. `settings.key`, `scheduler_steps.step_name`, donor phone) |
 
 ### Locations
 | Column | Type | Notes |
@@ -378,7 +385,7 @@ Admins 1 ── * AuditLogs
 
 ## 10. 🧱 Architecture
 
-**Next.js never talks to Google Sheets or holds business rules.** Laravel is the only gatekeeper. Credentials, sheet IDs, tokens, and rules stay on the server.
+**Next.js never talks to the database or holds business rules.** Laravel is the only gatekeeper. The database URL, tokens, and rules stay on the server.
 
 ```text
    Users (mobile browser)              Donors (Telegram)
@@ -391,15 +398,15 @@ Admins 1 ── * AuditLogs
            │ REST / JSON  /api/v1            │
            ▼                                 ▼
    ┌───────────────────────────────────────────────────┐
-   │ Laravel API (single instance)                     │
-   │ Validation · Normalizer · Duplicate lock          │
+   │ Laravel API (Render, one pilot instance)          │
+   │ Validation · Normalizer · Duplicate check         │
    │ Matching · Wave scheduler · Verification · Audit  │
    └───────┬───────────────────────────────┬───────────┘
            │ Repository interfaces          │ NotificationChannel
-   ┌───────┴─────────┐              ┌───────┴──────────────┐
-   ▼                 ▼              ▼                      ▼
- Sheets repos   Eloquent repos   TelegramChannel   WhatsAppCloudChannel
- (MVP)          (later)          (MVP)             (next)
+           ▼                        ┌───────┴──────────────┐
+   Eloquent repositories            ▼                      ▼
+   → PostgreSQL                  TelegramChannel   WhatsAppCloudChannel
+   (SQLite in dev/tests)         (MVP)             (next)
 
  External free cron ──every minute──▶ POST /api/v1/internal/tick
  (sends due waves, expires requests, returns availability, keeps the host awake)
@@ -407,8 +414,10 @@ Admins 1 ── * AuditLogs
 
 Key design rules (the constitution has the full list):
 
-- **Repository pattern from day one.** `DATA_DRIVER=sheets|mysql|pgsql` picks the implementation, and every implementation passes the same contract tests.
-- **Single writer lock** around every Sheets write, plus a short read cache invalidated on write. The backend runs as **one instance** while on Sheets.
+- **Repository pattern from day one.** Features depend only on repository contracts. The Eloquent implementations (`backend/app/Repositories/Eloquent/`) run on **PostgreSQL** when deployed and **SQLite** locally and in tests, selected with Laravel's `DB_CONNECTION`. Every implementation passes the same contract tests.
+- **Database integrity, not locks.** Writes use atomic upserts (`INSERT … ON CONFLICT`), transactions, and unique constraints; there is no global write lock. Database errors surface as `StoreUnavailable`.
+- **Migrations only.** The schema changes only through Laravel migrations, which run automatically at container start on Render (`AUTORUN_LARAVEL_MIGRATION=true`), because free instances have no shell.
+- **Instances.** Storage no longer needs a single backend instance. The pilot still runs **one** free Render instance; with `CACHE_STORE=file`, rate limits and the store-probe cache are per instance.
 - **`NotificationChannel` interface**: Telegram now, WhatsApp Cloud API next, without changing callers.
 - **`PhoneVerifier` interface**: Telegram contact share now, WhatsApp admin check as fallback, SMS OTP possible later.
 - **One scheduler endpoint** drives every time-based rule, and each step is idempotent.
@@ -457,7 +466,8 @@ The data includes name, phone, location, and blood type (**health data**, which 
 - **Donor accepts first**: no donor phone or identity leaves the server until that donor accepts a specific request, and only that request's requester sees it, only while the request is open
 - Public pages show only aggregate counts; small counts are shown as "fewer than 3"
 - No page lists donors; non-public pages are `noindex`
-- Google Sheet is **private**, shared only with the service account and one owner; no manual edits
+- The **PostgreSQL** database is reachable only by the backend through the `DB_URL` secret (TLS, `sslmode=require`); no one edits it by hand (no ad-hoc SQL)
+- Queries use **bound parameters** only; user input never becomes SQL
 - Secrets live only in `.env` (never committed)
 - HTTPS, backend validation, rate limits, Sanctum admin auth with lockout
 - Manage and response links use random tokens stored only as hashes
@@ -493,13 +503,24 @@ Goal: run the pilot for **$0**, and allow low-cost upgrades only behind interfac
 | Frontend | **Vercel** free tier | `*.vercel.app` subdomain |
 | Backend | **Render** free tier (Docker) | Sleeps when idle, so the cron below keeps it awake. Re-check Render's free-tier terms before launch |
 | Scheduler + keep-alive | Free external cron (e.g. cron-job.org) → `/internal/tick` every minute | |
-| Database (MVP) | **Google Sheets API** via a service account | Free; per-minute quotas, so reads are cached |
+| Database | **PostgreSQL**, any host, via one `DB_URL` secret | Host still to be chosen (see options below). SQLite locally: free, no account needed |
 | Donor notifications | **Telegram Bot API** | Free and official |
 | Fallback contact | Admin relay through `wa.me` links | Free, manual |
 | Phone verification | Telegram contact share; WhatsApp admin check | Free |
-| Backups | Scheduled spreadsheet copy to private Drive | Free |
+| Backups | Scheduled **`pg_dump`** to private storage (e.g. a GitHub Actions job) | Free; must exist before any personal data is stored (DS-08). Free database tiers often have no usable backups |
 | Domain | Host subdomain | Buy one after the pilot |
 | **Next paid step** | WhatsApp Cloud API notifications | Per-message cost; needs Meta business setup |
+
+### 🐘 PostgreSQL host options (operator's decision, not yet chosen)
+
+`render.yaml` deliberately declares **no database**, so any PostgreSQL host works: paste its connection URL into `DB_URL` in the Render dashboard.
+
+| Host | Cost | Limits / caveats |
+| --- | --- | --- |
+| Render free PostgreSQL | Free | ⚠️ **Not for real data**: expires 30 days after creation, deleted after a further 14-day grace period |
+| Render paid Basic | ~US$6–7 / month | Same provider as the backend |
+| Supabase free | Free | 500 MB; pauses after 7 days without activity, which the every-minute tick prevents |
+| Neon free | Free | 0.5 GB, 100 compute-hours / month; the every-minute tick keeps compute awake, so the hours may run out |
 
 > Free-tier terms change often. Re-check each provider's limits before deploying.
 
@@ -512,8 +533,7 @@ Goal: run the pilot for **$0**, and allow low-cost upgrades only behind interfac
 | i18n | Translation files, Arabic default (library chosen in the foundation slice) |
 | Backend | Laravel (PHP 8.3+), REST JSON API `/api/v1` |
 | Admin auth | Laravel Sanctum |
-| MVP storage | Google Sheets API (`google/apiclient`) |
-| Production DB | MySQL or PostgreSQL (later) |
+| Database | **PostgreSQL** (deployed) via Eloquent repositories and Laravel migrations; **SQLite** for local development and tests |
 | Notifications | Telegram Bot API → WhatsApp Cloud API |
 | Tests | Pest/PHPUnit, Larastan, Pint; ESLint, Prettier, Playwright |
 | Version control | Git + GitHub monorepo |
@@ -541,15 +561,15 @@ blood-donor-network/
 └── backend/                          ← Laravel
     ├── app/
     │   ├── Http/{Controllers,Requests,Resources}/
+    │   ├── Models/                   Setting, SchedulerStep, OperationalLog (Eloquent)
     │   ├── Services/                 PhoneNormalizer, Matching, WaveScheduler, Verification
     │   ├── Notifications/Channels/   Telegram, (WhatsAppCloud)
     │   ├── Repositories/
-    │   │   ├── Contracts/
-    │   │   ├── Sheets/
-    │   │   ├── InMemory/             tests
-    │   │   └── Eloquent/             later
-    │   └── Support/                  Ulid, Masking, SheetsLock
-    └── config/countries.php
+    │   │   ├── Contracts/            repository interfaces
+    │   │   └── Eloquent/             implementations + DatabaseStoreProbe
+    │   └── Support/                  Ids, Masking, StoreUnavailable, Utc
+    ├── config/countries.php
+    └── database/migrations/          settings, scheduler_steps, operational_logs
 ```
 
 ### Environment variables (`backend/.env`, never committed)
@@ -557,10 +577,9 @@ blood-donor-network/
 ```env
 APP_ENV=production
 APP_KEY=
-DATA_DRIVER=sheets
+DB_CONNECTION=pgsql
+DB_URL=
 DEFAULT_COUNTRY=EG
-GOOGLE_SHEET_ID=
-GOOGLE_SERVICE_ACCOUNT_JSON=
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_BOT_USERNAME=
 TELEGRAM_WEBHOOK_SECRET=
@@ -569,6 +588,17 @@ SCHEDULER_SECRET=
 FRONTEND_URL=
 ```
 
+| Setting | Deployed (Render) | Local development (recommended) | Local, no PostgreSQL |
+| --- | --- | --- | --- |
+| `DB_CONNECTION` | `pgsql` | `pgsql` | `sqlite` |
+| `DB_URL` | **Secret** entered in the Render dashboard (`sync: false` in `render.yaml`), e.g. `postgresql://user:password@host:5432/dbname?sslmode=require` | `postgresql://blood:blood_local_only@127.0.0.1:5432/blood` (local-only credentials) | Not used |
+| Database | Chosen PostgreSQL host | Local PostgreSQL 17 (portable binaries or `docker compose up -d db`) | `database/database.sqlite` |
+| Migrations | Run automatically at container start | `php artisan migrate` | `php artisan migrate` |
+
+- 🖥️ **Run it locally**: step-by-step PowerShell commands are in [`specs/001-project-foundation/quickstart.md` §2](specs/001-project-foundation/quickstart.md#2-%EF%B8%8F-run-locally)
+- 🧪 **Tests** use SQLite in memory by default, or a local PostgreSQL database whose name ends in `_test`; the Playwright e2e backend uses a throwaway SQLite file
+- **No Google account**, Google Cloud project, or service account is needed anywhere
+
 ## 17. 🚀 Roadmap
 
 ### 📝 Phase 0: Planning (now)
@@ -576,7 +606,8 @@ FRONTEND_URL=
 - [x] Constitution v1.0.1
 - [x] Business rules aligned with the constitution
 - [x] All open decisions settled (§20)
-- [ ] Google Sheet + service account created
+- [x] Storage moved from Google Sheets to **PostgreSQL** (constitution v1.1.0)
+- [ ] PostgreSQL host chosen (§14) and `DB_URL` set in the Render dashboard
 - [ ] Telegram bot created
 
 ### 🚀 Phase 1: MVP pilot
@@ -588,7 +619,6 @@ Each item is built as a Spec Kit feature (`/speckit-specify` → … → `/speck
 
 ### 🌱 Phase 2: Growth
 - WhatsApp Cloud API notifications
-- MySQL/PostgreSQL (switch `DATA_DRIVER`)
 - Donation history (`Donations`)
 - Nearby blood banks list for zero-result requests
 - Neighbouring localities, RegionAdmin roles in use
@@ -649,5 +679,6 @@ Each item is built as a Spec Kit feature (`/speckit-specify` → … → `/speck
 | 13 | Backend host | **Render** free tier + every-minute cron ping |
 | 14 | Pilot admins | **Owner + 1–2 trusted villagers**, each with their own account |
 | 15 | Pilot spelling | **Arab Mutair (عرب مطير)** |
+| 16 | Data storage | **PostgreSQL** (was Google Sheets), by owner decision; SQLite for local development and tests. The host is chosen by the operator at launch (§14) |
 
-> ✅ **No open decisions remain.** See [docs/BUSINESS_RULES.md](docs/BUSINESS_RULES.md#-decisions) for the rules each decision affects.
+> ✅ **No open product decisions remain.** The PostgreSQL host is an operational choice made at launch. See [docs/BUSINESS_RULES.md](docs/BUSINESS_RULES.md#-decisions) for the rules each decision affects.

@@ -7,6 +7,7 @@ info:
     All responses send `X-Robots-Tag: noindex` and `Cache-Control: no-store`.
     CORS: only the configured FRONTEND_URL origin is allowed (GET on /health only).
     All times are UTC ISO 8601.
+    "Store" means the backend's database (PostgreSQL when deployed, SQLite locally and in tests).
 servers:
   - url: https://{backend-host}/api/v1
     variables:
@@ -17,14 +18,14 @@ paths:
     get:
       summary: Public service status (three-state summary is completed by the frontend)
       description: |
-        Backend reachability is implied by any response. Store reachability is probed at most
-        once per 60 seconds (cached). Never returns internal details (FR-004).
+        Backend reachability is implied by any response. Database reachability and structure are
+        probed at most once per 60 seconds (cached). Never returns internal details (FR-004).
         Rate limit: 60 requests/min per IP.
       operationId: getHealth
       security: []
       responses:
         '200':
-          description: Backend is up. `status` says whether the store and configuration are OK.
+          description: Backend is up. `status` says whether the database and configuration are OK.
           content:
             application/json:
               schema:
@@ -134,7 +135,7 @@ components:
       properties:
         status: { type: string, enum: [running, limited] }
         checkedAt: { type: string, format: date-time }
-        driver: { type: string, enum: [sheets, memory] }
+        driver: { type: string, enum: [pgsql, sqlite], description: Active database connection (DB_CONNECTION) }
         version: { type: string, description: Build commit SHA }
         store:
           type: object
@@ -145,7 +146,7 @@ components:
             structureComplete: { type: boolean }
             missing:
               type: array
-              description: Missing tabs or headers, e.g. "SchedulerSteps.LastPeriod"
+              description: Missing tables or columns (migrations not run yet), e.g. "scheduler_steps.last_period"
               items: { type: string }
         config:
           type: object

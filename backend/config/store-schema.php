@@ -1,21 +1,18 @@
 <?php
 
 /*
-| Tabs and their header rows, in order (data-model.md, FR-033).
-| `php artisan store:setup` creates missing tabs and appends missing headers
-| at the end. Later features add their tabs here.
+| Tables and the columns the app relies on (data-model.md, FR-033). The
+| migrations create them; the health probe reports any that are missing,
+| which means the migrations have not run. Later features add tables here.
 */
+
 return [
-
-    'Settings' => ['ID', 'Key', 'Value', 'UpdatedAt', 'UpdatedBy'],
-
-    'SchedulerSteps' => [
-        'ID', 'StepName', 'LastPeriod', 'LastRunAt', 'LastOutcome',
-        'LastError', 'LastSuccessAt', 'ConsecutiveFailures',
+    'settings' => ['id', 'key', 'value', 'updated_at', 'updated_by'],
+    'scheduler_steps' => [
+        'id', 'step_name', 'last_period', 'last_run_at', 'last_outcome',
+        'last_error', 'last_success_at', 'consecutive_failures',
     ],
-
-    'OperationalLogs' => [
-        'ID', 'Level', 'Event', 'ActorType', 'ActorRef', 'Context', 'IP', 'CreatedAt',
+    'operational_logs' => [
+        'id', 'level', 'event', 'actor_type', 'actor_ref', 'context', 'ip', 'created_at',
     ],
-
 ];
