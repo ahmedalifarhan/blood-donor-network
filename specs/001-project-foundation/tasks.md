@@ -283,6 +283,10 @@ description: "Task list for 001-project-foundation"
 > | **Versions** | `actions/checkout@v7`, `actions/setup-node@v7`, `actions/cache@v6`, `actions/upload-artifact@v7`, `shivammathur/setup-php@v2` (all Node 24), from the actions' release tags on 2026-10-19 |
 > | **Checked locally** | Workflow YAML parses (5 jobs, pinned actions, `contents: read`); `.gitleaks.toml` parses; `composer lint` / `analyse` / `test` pass; 49/49 on local PostgreSQL; frontend `lint`, `format:check`, `typecheck`, `test` (15), `build` pass. **Not checkable locally**: the GitHub run itself, gitleaks, the Docker build (no Docker here) |
 > | **No secrets used** | Every credential in `ci.yml` is a throwaway value for disposable CI containers; the API container's `APP_KEY` is generated per run and masked |
+> | **Run #1** ([39274656871](https://github.com/ahmedalifarhan/blood-donor-network/actions/runs/39274656871), manual, `155e2f0`) | ✅ `backend` (incl. PostgreSQL 17), ✅ `e2e`, ✅ `secrets-scan` (full history); ❌ `frontend`, ❌ `docker-image` |
+> | **Fix: `frontend`** | `typecheck` failed with `TS2304 Cannot find name 'LayoutProps'`: the type is generated into `.next/types` and referenced from the git-ignored `next-env.d.ts`, so a clean checkout has neither. `typecheck` is now `next typegen && tsc --noEmit` (reproduced and verified on a clean copy) |
+> | **Fix: `docker-image`** | Nothing listened on port 8080. `backend/resources/views` was an **empty, untracked** folder, so it is missing in a clean checkout and in the image; the image's start-up `php artisan optimize` then fails in `view:cache` (reproduced: exit 1) and the web server never starts. Added `backend/resources/views/.gitkeep` (verified: `optimize` exit 0). The job now also publishes the container log tail as a public annotation when start-up fails |
+> | **Why "0 runs" earlier** | The first manual trigger did not create a run (GitHub recorded no run, check run, or check suite); the next click did. Actions was enabled throughout. Pushes to `feat/s0-foundation` never trigger `ci` by design (only `pull_request`, `push` to `main`, manual) |
 
 ---
 

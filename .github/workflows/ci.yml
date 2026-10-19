@@ -212,10 +212,15 @@ jobs:
       - name: Wait for the container to answer /up
         run: |
           for i in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1:8080/up > /dev/null; then echo "up after ${i}x2 s"; exit 0; fi
+            if curl -fsS http://127.0.0.1:8080/up > /dev/null 2>&1; then echo "up after $((i * 2)) s"; exit 0; fi
+            if [ "$(docker inspect --format '{{.State.Running}}' api)" != "true" ]; then echo "The container stopped" >&2; break; fi
             sleep 2
           done
-          echo "The container did not become healthy in 120 s" >&2
+          docker ps --all --filter name=api
+          # Also publish the end of the container log as an annotation, which is readable
+          # without signing in to GitHub (job logs are not).
+          tail="$(docker logs --tail 40 api 2>&1 | sed 's/%/%25/g' | awk 'BEGIN { ORS = "%0A" } { print }')"
+          echo "::error title=API container did not start::${tail}"
           exit 1
 
       - name: Migrations ran at container start
