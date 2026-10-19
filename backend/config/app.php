@@ -42,7 +42,7 @@ return [
     'debug' => (bool) env('APP_DEBUG', false),
 
     // Build commit SHA (operator health view) and the frontend origin (CORS).
-    'version' => env('APP_VERSION', 'dev'),
+    'version' => env('APP_VERSION', env('RENDER_GIT_COMMIT', 'dev')),
 
     'frontend_url' => env('FRONTEND_URL'),
 
