@@ -162,9 +162,9 @@ description: "Task list for 001-project-foundation"
 - [X] T077 Deploy configuration: `backend/Dockerfile` runs migrations at container start (`AUTORUN_LARAVEL_MIGRATION=true`); `render.yaml` sets `DB_CONNECTION=pgsql` and asks for `DB_URL` (`sync: false`, no database declared); `backend/.env.example` documents `DB_CONNECTION` and `DB_URL`; `frontend/playwright.config.ts` starts the backend on a fresh, migrated SQLite file
 - [X] T078 Update docs: constitution v1.1.0, `README.md`, `docs/BUSINESS_RULES.md`, `spec.md`, `plan.md`, `research.md`, `data-model.md`, `contracts/`, `quickstart.md`, and this file
 - [X] T079 Verify on local PostgreSQL 17: migrations (up, re-run, rollback, up), the full backend suite on `blood_test`, a 20-process parallel-writer check, and the frontend → API → PostgreSQL health path. Add `docker-compose.yml` + `docker/postgres/init/` for local PostgreSQL, a `_test` database-name guard in `backend/tests/TestCase.php`, and exclude local SQLite files in `backend/.dockerignore`
-- [ ] T080 Build the Docker image locally (`docker build backend`) and run it against local PostgreSQL with the production environment (`APP_ENV=production`, `DB_CONNECTION=pgsql`, `DB_URL`, secrets): container start runs the migrations and `/api/v1/health` reports `running`. Docker Desktop is not installed on the development machine (WSL install failed), so this now runs in CI as the `docker-image` job (see the US5 notes); tick it after that job is green on GitHub
+- [X] T080 Build the Docker image locally (`docker build backend`) and run it against local PostgreSQL with the production environment (`APP_ENV=production`, `DB_CONNECTION=pgsql`, `DB_URL`, secrets): container start runs the migrations and `/api/v1/health` reports `running`. Docker Desktop is not installed on the development machine (WSL install failed), so this now runs in CI as the `docker-image` job (see the US5 notes). **Done 2026-10-19 in CI (deviation: GitHub-hosted runner instead of this machine)**: ci #2 built the image, found `pdo_pgsql`, started it with the production configuration against PostgreSQL 17, ran the 3 migrations at start-up, and `/api/v1/health` returned `running`
 
-**Checkpoint**: The app runs on PostgreSQL or SQLite with only `DB_CONNECTION` / `DB_URL` changed, verified on a real PostgreSQL 17 server (T079). The Docker image is still unverified (T080).
+**Checkpoint**: The app runs on PostgreSQL or SQLite with only `DB_CONNECTION` / `DB_URL` changed, verified on a real PostgreSQL 17 server (T079). The Docker image is verified in CI (T080, ci #2).
 
 > 🛠️ **Implementation notes (Phase 3b, 2026-10-19)**
 >
@@ -177,7 +177,7 @@ description: "Task list for 001-project-foundation"
 > | **Local PHP** | `pdo_pgsql` ships with PHP but is off in `php.ini`; `php -d extension=pdo_pgsql` works for one-off commands, `php artisan serve` needs it enabled in `php.ini` (quickstart §2.2) |
 > | **Display quirk** | `php artisan db:show` prints the unused `DB_DATABASE` default (`laravel`) when `DB_URL` is set; the real connection is the URL's database (checked with `current_database()`) |
 > | **Review fixes (pre-commit)** | `DB_URL` now applies only to the `pgsql` connection (a `sqlite`-named connection with a PostgreSQL URL had silently become PostgreSQL, bypassing the test guard and letting e2e `migrate:fresh` hit the dev database); the test guard checks the resolved driver + database name (SQLite `:memory:` or `*_test` only); e2e blanks `DB_URL`; `last_error` is masked **before** the 500-char cut (masking lengthens digit runs); 5 s PostgreSQL connect timeout |
-> | **Not verified** | Docker image build and container start (T080); the first Render deploy (T040) |
+> | **Not verified** | The first Render deploy (T040). The Docker image build and container start were verified in CI (T080, ci #2) |
 
 ---
 
@@ -226,7 +226,7 @@ description: "Task list for 001-project-foundation"
 ### Implementation for User Story 3
 
 - [ ] T056 [US3] Run the suite on both databases and fix any divergence in `backend/app/Repositories/Eloquent/` until **C1–C8, C10–C13** pass on SQLite and PostgreSQL (C9 was Sheets-only and is retired)
-- [ ] T057 [US3] Add the PostgreSQL contract run to the `backend` job of `.github/workflows/ci.yml` (T064): a `postgres:17` service container (same major version as local development), database `contract_test`, `TEST_DB_URL` set from the service, `./vendor/bin/pest tests/Contract --group=pgsql`. No secrets are needed
+- [X] T057 [US3] Add the PostgreSQL contract run to the `backend` job of `.github/workflows/ci.yml` (T064): a `postgres:17` service container (same major version as local development), database `contract_test`, `TEST_DB_URL` set from the service, `./vendor/bin/pest tests/Contract --group=pgsql`. No secrets are needed. **Done 2026-10-19 (ci #2), with a deviation**: see the US5 implementation notes
 
 **Checkpoint**: Storage is swappable by configuration, proven by one suite on both databases.
 
@@ -262,15 +262,15 @@ description: "Task list for 001-project-foundation"
 
 ### Implementation for User Story 5
 
-- [ ] T064 [US5] Create `.github/workflows/ci.yml` (triggers `pull_request` and `push` to `main`; `concurrency` cancel-in-progress) with jobs named exactly **`backend`** (PHP 8.3 via `shivammathur/setup-php` with `pdo_pgsql` and `pdo_sqlite`, composer cache, `composer lint`, `composer analyse`, `composer test`, plus the PostgreSQL contract run from T057), **`frontend`** (Node 24, `npm ci`, `lint`, `format:check`, `typecheck`, `test`, `build`), **`e2e`** (PHP 8.3 + Node 24, `composer install`, `npm ci`, `npx playwright install --with-deps chromium`, `npm run e2e`, upload `frontend/playwright-report` as artifact), **`secrets-scan`** (`gitleaks/gitleaks-action@v2` on full history)
-- [ ] T065 [P] [US5] Create `.github/pull_request_template.md` with a constitution checklist (Principles I–VII, tests-first for core rules, no secrets, docs updated) and `.gitleaks.toml` extending the default rules
+- [X] T064 [US5] Create `.github/workflows/ci.yml` (triggers `pull_request` and `push` to `main`; `concurrency` cancel-in-progress) with jobs named exactly **`backend`** (PHP 8.3 via `shivammathur/setup-php` with `pdo_pgsql` and `pdo_sqlite`, composer cache, `composer lint`, `composer analyse`, `composer test`, plus the PostgreSQL contract run from T057), **`frontend`** (Node 24, `npm ci`, `lint`, `format:check`, `typecheck`, `test`, `build`), **`e2e`** (PHP 8.3 + Node 24, `composer install`, `npm ci`, `npx playwright install --with-deps chromium`, `npm run e2e`, upload `frontend/playwright-report` as artifact), **`secrets-scan`** (`gitleaks/gitleaks-action@v2` on full history). **Done 2026-10-19 (ci #2), with deviations**: see the US5 implementation notes
+- [X] T065 [P] [US5] Create `.github/pull_request_template.md` with a constitution checklist (Principles I–VII, tests-first for core rules, no secrets, docs updated) and `.gitleaks.toml` extending the default rules
 - [ ] T066 [US5] (operator) Following `specs/001-project-foundation/quickstart.md` §5 step 4, enable branch protection on `main` requiring checks `backend`, `frontend`, `e2e`, `secrets-scan`; then run validation **V11** with a deliberately failing PR and **V12–V13** from the CI results
 
 **Checkpoint**: All user stories are independently functional and gated by CI.
 
-> 🛠️ **Implementation notes (US5 + T057, 2026-10-19): written, not yet run on GitHub**
+> 🛠️ **Implementation notes (US5 + T057, 2026-10-19): verified on GitHub (run #2)**
 >
-> T057, T064, and T065 stay unchecked until the first green run of `ci` on GitHub.
+> T057, T064, T065, and T080 were ticked on 2026-10-19 after ci #2 passed every job on GitHub. T066 (branch protection) is still open: `main` does not exist yet.
 >
 > | Topic | As built |
 > | --- | --- |
@@ -286,6 +286,11 @@ description: "Task list for 001-project-foundation"
 > | **Run #1** ([39274656871](https://github.com/ahmedalifarhan/blood-donor-network/actions/runs/39274656871), manual, `155e2f0`) | ✅ `backend` (incl. PostgreSQL 17), ✅ `e2e`, ✅ `secrets-scan` (full history); ❌ `frontend`, ❌ `docker-image` |
 > | **Fix: `frontend`** | `typecheck` failed with `TS2304 Cannot find name 'LayoutProps'`: the type is generated into `.next/types` and referenced from the git-ignored `next-env.d.ts`, so a clean checkout has neither. `typecheck` is now `next typegen && tsc --noEmit` (reproduced and verified on a clean copy) |
 > | **Fix: `docker-image`** | Nothing listened on port 8080. `backend/resources/views` was an **empty, untracked** folder, so it is missing in a clean checkout and in the image; the image's start-up `php artisan optimize` then fails in `view:cache` (reproduced: exit 1) and the web server never starts. Added `backend/resources/views/.gitkeep` (verified: `optimize` exit 0). The job now also publishes the container log tail as a public annotation when start-up fails |
+> | **Run #1, attempt 2** (re-run of `155e2f0`) | Same result as attempt 1 (same `LayoutProps` error, same container start-up failure): a re-run replays the old commit without the fixes |
+> | **Run #2** ([39277525010](https://github.com/ahmedalifarhan/blood-donor-network/actions/runs/39277525010), manual, `ef07710`) | ✅ **All 5 jobs green**, every step `success` (confirmed from the jobs API and from the 5 check runs on `ef07710`): `backend` 51 s (Pint, Larastan, SQLite tests, **PostgreSQL 17 tests**), `frontend` 142 s (lint, format, **typecheck**, test, build), `e2e` 56 s, `secrets-scan` 7 s, `docker-image` 73 s (build, `pdo_pgsql`, start, `/up`, 3 migrations **Ran**, health `running`) |
+> | **Deviations accepted on tick** | T057: whole backend suite on PostgreSQL 17 (`DB_CONNECTION=pgsql`, `DB_URL=…/contract_test`) instead of `tests/Contract --group=pgsql` with `TEST_DB_URL`, until T051 builds that harness. T064: `gitleaks-action@v3` (Node 24) instead of `@v2`, plus a `workflow_dispatch` trigger. T080: verified on a GitHub runner, not on the development machine |
+> | **Not yet exercised** | The `pull_request` and `push`-to-`main` triggers (only manual runs so far); they start working once `main` exists and pull requests are opened (T066). The `secrets-scan` full-history claim rests on the action's documented manual-run behavior; its log needs a signed-in view |
+> | **Runner notice** | GitHub: `ubuntu-latest` moves to Ubuntu 26 from 2026-10-19 (informational; no failures seen) |
 > | **Why "0 runs" earlier** | The first manual trigger did not create a run (GitHub recorded no run, check run, or check suite); the next click did. Actions was enabled throughout. Pushes to `feat/s0-foundation` never trigger `ci` by design (only `pull_request`, `push` to `main`, manual) |
 
 ---
